@@ -616,6 +616,9 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		if !account.IsSchedulable() || !account.IsOpenAI() {
 			continue
 		}
+		if account.ShouldSkipOpenAIFreeSchedulingAt90Percent() {
+			continue
+		}
 		// require_privacy_set: 跳过 privacy 未设置的账号并标记异常
 		if schedGroup != nil && schedGroup.RequirePrivacySet && !account.IsPrivacySet() {
 			_ = s.service.accountRepo.SetError(ctx, account.ID,

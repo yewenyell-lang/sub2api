@@ -104,6 +104,24 @@ func (a *Account) EffectiveLoadFactor() int {
 	return 1
 }
 
+func (a *Account) ShouldSkipOpenAIFreeSchedulingAt90Percent() bool {
+	if a == nil || a.Platform != PlatformOpenAI {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(a.GetCredential("plan_type")), "free") {
+		return false
+	}
+	used5h, ok5h := a.extraFloat64("codex_5h_used_percent")
+	used7d, ok7d := a.extraFloat64("codex_7d_used_percent")
+	if ok5h && used5h >= 90 {
+		return true
+	}
+	if ok7d && used7d >= 90 {
+		return true
+	}
+	return false
+}
+
 func (a *Account) IsSchedulable() bool {
 	if !a.IsActive() || !a.Schedulable {
 		return false
@@ -220,6 +238,34 @@ func (a *Account) GetCredential(key string) string {
 		return strconv.Itoa(val)
 	default:
 		return ""
+	}
+}
+
+func (a *Account) extraFloat64(key string) (float64, bool) {
+	if a == nil || a.Extra == nil {
+		return 0, false
+	}
+	v, ok := a.Extra[key]
+	if !ok || v == nil {
+		return 0, false
+	}
+	switch val := v.(type) {
+	case float64:
+		return val, true
+	case float32:
+		return float64(val), true
+	case int:
+		return float64(val), true
+	case int64:
+		return float64(val), true
+	case json.Number:
+		f, err := val.Float64()
+		return f, err == nil
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(val), 64)
+		return f, err == nil
+	default:
+		return 0, false
 	}
 }
 

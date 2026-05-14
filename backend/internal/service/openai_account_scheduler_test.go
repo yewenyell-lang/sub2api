@@ -299,6 +299,89 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabledUsesLega
 	require.False(t, decision.StickyPreviousHit)
 }
 
+func TestAccount_ShouldSkipOpenAIFreeSchedulingAt90Percent(t *testing.T) {
+	tests := []struct {
+		name    string
+		account *Account
+		want    bool
+	}{
+		{
+			name: "openai free over 90 percent on 7d",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{"plan_type": "free"},
+				Extra: map[string]any{"codex_7d_used_percent": 91.0},
+			},
+			want: true,
+		},
+		{
+			name: "openai free under 90 percent",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{"plan_type": "free"},
+				Extra: map[string]any{"codex_5h_used_percent": 89.0},
+			},
+			want: false,
+		},
+		{
+			name: "openai plus unaffected",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{"plan_type": "plus"},
+				Extra: map[string]any{"codex_5h_used_percent": 99.0},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, tt.account.ShouldSkipOpenAIFreeSchedulingAt90Percent())
+		})
+	}
+}
+
+func TestOpenAIAccountScheduler_SelectByLoadBalance_SkipsOpenAIFreeAt90Percent(t *testing.T) {
+	ctx := context.Background()
+	accounts := []Account{
+		{
+			ID:          41001,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			Credentials: map[string]any{"plan_type": "free"},
+			Extra:       map[string]any{"codex_7d_used_percent": 91.0},
+		},
+		{
+			ID:          41002,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			Credentials: map[string]any{"plan_type": "free"},
+			Extra:       map[string]any{"codex_7d_used_percent": 20.0},
+		},
+	}
+	repo := schedulerTestOpenAIAccountRepo{accounts: accounts}
+	service := &OpenAIGatewayService{
+		accountRepo:        repo,
+		concurrencyService: &ConcurrencyService{cache: schedulerTestConcurrencyCache{}},
+		cfg:                newSchedulerTestOpenAIWSV2Config(),
+	}
+	scheduler := newDefaultOpenAIAccountScheduler(service, nil)
+
+	selection, _, err := scheduler.Select(ctx, OpenAIAccountScheduleRequest{RequestedModel: "gpt-5"})
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(41002), selection.Account.ID)
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_RequiredWSV2_SkipsHTTPOnlyAccount(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
