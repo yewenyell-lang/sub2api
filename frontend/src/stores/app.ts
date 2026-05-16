@@ -28,6 +28,7 @@ export const useAppStore = defineStore('app', () => {
   const siteName = ref<string>('Sub2API')
   const siteLogo = ref<string>('')
   const siteVersion = ref<string>('')
+  const siteOurVersion = ref<string>('')
   const contactInfo = ref<string>('')
   const apiBaseUrl = ref<string>('')
   const docUrl = ref<string>('')
@@ -37,6 +38,7 @@ export const useAppStore = defineStore('app', () => {
   const versionLoaded = ref<boolean>(false)
   const versionLoading = ref<boolean>(false)
   const currentVersion = ref<string>('')
+  const ourVersion = ref<string>('')
   const latestVersion = ref<string>('')
   const hasUpdate = ref<boolean>(false)
   const buildType = ref<string>('source')
@@ -243,6 +245,7 @@ export const useAppStore = defineStore('app', () => {
     if (versionLoaded.value && !force) {
       return {
         current_version: currentVersion.value,
+        our_version: ourVersion.value || undefined,
         latest_version: latestVersion.value,
         has_update: hasUpdate.value,
         build_type: buildType.value,
@@ -260,6 +263,7 @@ export const useAppStore = defineStore('app', () => {
     try {
       const data = await checkUpdatesAPI(force)
       currentVersion.value = data.current_version
+      ourVersion.value = data.our_version || ''
       latestVersion.value = data.latest_version
       hasUpdate.value = data.has_update
       buildType.value = data.build_type || 'source'
@@ -295,6 +299,7 @@ export const useAppStore = defineStore('app', () => {
     siteName.value = config.site_name || 'Sub2API'
     siteLogo.value = config.site_logo || ''
     siteVersion.value = config.version || ''
+    siteOurVersion.value = config.our_version || ''
     contactInfo.value = config.contact_info || ''
     apiBaseUrl.value = config.api_base_url || ''
     docUrl.value = config.doc_url || ''
@@ -351,6 +356,7 @@ export const useAppStore = defineStore('app', () => {
         google_oauth_enabled: false,
         backend_mode_enabled: false,
         version: siteVersion.value,
+        our_version: siteOurVersion.value || undefined,
         balance_low_notify_enabled: false,
         account_quota_notify_enabled: false,
         balance_low_notify_threshold: 0,
@@ -415,6 +421,7 @@ export const useAppStore = defineStore('app', () => {
     siteName,
     siteLogo,
     siteVersion,
+    siteOurVersion,
     contactInfo,
     apiBaseUrl,
     docUrl,
@@ -424,6 +431,7 @@ export const useAppStore = defineStore('app', () => {
     versionLoaded,
     versionLoading,
     currentVersion,
+    ourVersion,
     latestVersion,
     hasUpdate,
     buildType,

@@ -17,7 +17,7 @@
           {{ siteName }}
         </span>
         <!-- Version Badge -->
-        <VersionBadge :version="siteVersion" />
+        <VersionBadge :version="siteVersion" :our-version="siteOurVersion" />
       </div>
     </div>
 
@@ -245,6 +245,7 @@ const expandedGroups = ref<Set<string>>(new Set())
 const siteName = computed(() => appStore.siteName)
 const siteLogo = computed(() => appStore.siteLogo)
 const siteVersion = computed(() => appStore.siteVersion)
+const siteOurVersion = computed(() => appStore.siteOurVersion)
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
 
 // SVG Icon Components

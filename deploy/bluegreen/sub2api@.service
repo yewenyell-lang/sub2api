@@ -1,0 +1,27 @@
+[Unit]
+Description=Sub2API %i instance
+Documentation=https://github.com/Wei-Shaw/sub2api
+After=network.target postgresql.service redis-server.service redis.service
+Wants=postgresql.service redis-server.service redis.service
+
+[Service]
+Type=simple
+User=sub2api
+Group=sub2api
+WorkingDirectory=/opt/sub2api
+EnvironmentFile=/etc/sub2api/bluegreen/%i.env
+ExecStart=/opt/sub2api/current-%i/sub2api
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sub2api-%i
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/sub2api
+
+[Install]
+WantedBy=multi-user.target

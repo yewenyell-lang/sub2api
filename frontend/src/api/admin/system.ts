@@ -18,14 +18,15 @@ export interface VersionInfo {
   release_info?: ReleaseInfo
   cached: boolean
   warning?: string
+  our_version?: string
   build_type: string // "source" for manual builds, "release" for CI builds
 }
 
 /**
  * Get current version
  */
-export async function getVersion(): Promise<{ version: string }> {
-  const { data } = await apiClient.get<{ version: string }>('/admin/system/version')
+export async function getVersion(): Promise<{ version: string; our_version?: string }> {
+  const { data } = await apiClient.get<{ version: string; our_version?: string }>('/admin/system/version')
   return data
 }
 

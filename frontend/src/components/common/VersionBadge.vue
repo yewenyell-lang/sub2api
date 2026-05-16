@@ -4,26 +4,34 @@
     <template v-if="isAdmin">
       <button
         @click="toggleDropdown"
-        class="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors"
+        class="flex max-w-[172px] flex-col items-start gap-0.5 rounded-lg px-2 py-1 text-xs transition-colors"
         :class="[
           hasUpdate
             ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50'
             : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-800 dark:text-dark-400 dark:hover:bg-dark-700'
         ]"
-        :title="hasUpdate ? t('version.updateAvailable') : t('version.upToDate')"
+        :title="versionTitle"
       >
-        <span v-if="currentVersion" class="font-medium">v{{ currentVersion }}</span>
+        <span class="flex w-full min-w-0 items-center gap-1.5">
+          <span v-if="currentVersion" class="shrink-0 font-medium">v{{ currentVersion }}</span>
+          <span
+            v-if="hasUpdate"
+            class="relative flex h-2 w-2 shrink-0"
+          >
+            <span
+              class="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"
+            ></span>
+            <span class="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
+          </span>
+        </span>
         <span
-          v-else
+          v-if="displayOurVersion"
+          class="max-w-full truncate rounded-md bg-primary-50 px-1.5 py-0.5 text-[11px] font-medium leading-4 text-primary-700 ring-1 ring-primary-100 dark:bg-primary-900/20 dark:text-primary-300 dark:ring-primary-900/40"
+        >{{ displayOurVersion }}</span>
+        <span
+          v-else-if="!currentVersion"
           class="h-3 w-12 animate-pulse rounded bg-gray-200 font-medium dark:bg-dark-600"
         ></span>
-        <!-- Update indicator -->
-        <span v-if="hasUpdate" class="relative flex h-2 w-2">
-          <span
-            class="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"
-          ></span>
-          <span class="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
-        </span>
       </button>
 
       <!-- Dropdown -->
@@ -31,7 +39,7 @@
         <div
           v-if="dropdownOpen"
           ref="dropdownRef"
-          class="absolute left-0 z-50 mt-2 w-64 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg dark:border-dark-700 dark:bg-dark-800"
+          class="absolute left-0 z-50 mt-2 w-72 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg dark:border-dark-700 dark:bg-dark-800"
         >
           <!-- Header with refresh button -->
           <div
@@ -77,40 +85,41 @@
 
             <!-- Content -->
             <template v-else>
-              <!-- Version display - centered and prominent -->
-              <div class="mb-4 text-center">
-                <div class="inline-flex items-center gap-2">
-                  <span
-                    v-if="currentVersion"
-                    class="text-2xl font-bold text-gray-900 dark:text-white"
-                    >v{{ currentVersion }}</span
-                  >
-                  <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
-                  <!-- Show check mark when up to date -->
-                  <span
-                    v-if="!hasUpdate"
-                    class="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
-                  >
-                    <svg
-                      class="h-3 w-3 text-green-600 dark:text-green-400"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
+              <!-- Version display -->
+              <div class="mb-4 space-y-2">
+                <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900/40">
+                  <div class="flex items-center justify-between gap-3">
+                    <p class="text-[11px] font-medium text-gray-500 dark:text-dark-400">上游版本</p>
+                    <span
+                      v-if="!hasUpdate"
+                      class="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
                     >
-                      <path
-                        fill-rule="evenodd"
-                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                  </span>
+                      <svg class="h-3 w-3 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path
+                          fill-rule="evenodd"
+                          d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                    </span>
+                  </div>
+                  <p class="mt-1 text-xl font-bold text-gray-900 dark:text-white">
+                    {{ currentVersion ? `v${currentVersion}` : '--' }}
+                  </p>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                    {{ hasUpdate ? t('version.latestVersion') + ': v' + latestVersion : t('version.upToDate') }}
+                  </p>
                 </div>
-                <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-                  {{
-                    hasUpdate
-                      ? t('version.latestVersion') + ': v' + latestVersion
-                      : t('version.upToDate')
-                  }}
-                </p>
+
+                <div
+                  v-if="displayOurVersion"
+                  class="rounded-lg border border-primary-100 bg-primary-50/80 px-3 py-2 dark:border-primary-900/40 dark:bg-primary-900/10"
+                >
+                  <p class="text-[11px] font-medium text-primary-600 dark:text-primary-300">我们的版本</p>
+                  <p class="mt-1 break-all text-sm font-semibold text-primary-800 dark:text-primary-200">
+                    {{ displayOurVersion }}
+                  </p>
+                </div>
               </div>
 
               <!-- Priority 1: Update error (must check before hasUpdate) -->
@@ -374,8 +383,9 @@
     </template>
 
     <!-- Non-admin: Simple static version text -->
-    <span v-else-if="version" class="text-xs text-gray-500 dark:text-dark-400">
-      v{{ version }}
+    <span v-else-if="version" class="flex max-w-[172px] flex-col items-start gap-0.5 text-xs text-gray-500 dark:text-dark-400">
+      <span>v{{ version }}</span>
+      <span v-if="ourVersion" class="max-w-full truncate text-[11px] text-primary-600 dark:text-primary-300">{{ ourVersion }}</span>
     </span>
   </div>
 </template>
@@ -391,6 +401,7 @@ const { t } = useI18n()
 
 const props = defineProps<{
   version?: string
+  ourVersion?: string
 }>()
 
 const authStore = useAuthStore()
@@ -404,6 +415,14 @@ const dropdownRef = ref<HTMLElement | null>(null)
 // Use store's cached version state
 const loading = computed(() => appStore.versionLoading)
 const currentVersion = computed(() => appStore.currentVersion || props.version || '')
+const displayOurVersion = computed(() => appStore.ourVersion || props.ourVersion || '')
+const versionTitle = computed(() => {
+  const parts = []
+  if (currentVersion.value) parts.push(`上游版本: v${currentVersion.value}`)
+  if (displayOurVersion.value) parts.push(`我们的版本: ${displayOurVersion.value}`)
+  if (hasUpdate.value) parts.push(t('version.updateAvailable'))
+  return parts.join('\n') || t('version.upToDate')
+})
 const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)

@@ -61,7 +61,7 @@ func TestSettingHandler_GetPublicSettings_ExposesForceEmailOnThirdPartySignup(t 
 			service.SettingKeyForceEmailOnThirdPartySignup: "true",
 		},
 	}
-	h := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), "test-version")
+	h := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), "test-version", "test-our-version")
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -74,12 +74,14 @@ func TestSettingHandler_GetPublicSettings_ExposesForceEmailOnThirdPartySignup(t 
 	var resp struct {
 		Code int `json:"code"`
 		Data struct {
-			ForceEmailOnThirdPartySignup bool `json:"force_email_on_third_party_signup"`
+			ForceEmailOnThirdPartySignup bool   `json:"force_email_on_third_party_signup"`
+			OurVersion                   string `json:"our_version"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, 0, resp.Code)
 	require.True(t, resp.Data.ForceEmailOnThirdPartySignup)
+	require.Equal(t, "test-our-version", resp.Data.OurVersion)
 }
 
 func TestSettingHandler_GetPublicSettings_ExposesWeChatOAuthModeCapabilities(t *testing.T) {
@@ -96,7 +98,7 @@ func TestSettingHandler_GetPublicSettings_ExposesWeChatOAuthModeCapabilities(t *
 			service.SettingKeyWeChatConnectRedirectURL:         "https://api.example.com/api/v1/auth/oauth/wechat/callback",
 			service.SettingKeyWeChatConnectFrontendRedirectURL: "/auth/wechat/callback",
 		},
-	}, &config.Config{}), "test-version")
+	}, &config.Config{}), "test-version", "")
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)

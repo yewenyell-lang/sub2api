@@ -766,6 +766,18 @@ func TestGetServerAddressFromEnv(t *testing.T) {
 	}
 }
 
+func TestServerGracefulShutdownDuration(t *testing.T) {
+	server := ServerConfig{GracefulShutdownTimeout: 30}
+	if got := server.GracefulShutdownDuration(); got != 30*time.Second {
+		t.Fatalf("GracefulShutdownDuration() = %s, want 30s", got)
+	}
+
+	server.GracefulShutdownTimeout = 0
+	if got := server.GracefulShutdownDuration(); got != 10*time.Minute {
+		t.Fatalf("GracefulShutdownDuration() default = %s, want 10m", got)
+	}
+}
+
 func TestValidateAbsoluteHTTPURL(t *testing.T) {
 	if err := ValidateAbsoluteHTTPURL("https://example.com/path"); err != nil {
 		t.Fatalf("ValidateAbsoluteHTTPURL valid url error: %v", err)

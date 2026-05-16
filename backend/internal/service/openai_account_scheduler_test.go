@@ -242,7 +242,7 @@ func (s *openAISnapshotCacheStub) GetAccount(ctx context.Context, accountID int6
 	return &cloned, nil
 }
 
-func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabledUsesLegacyLoadAwareness(t *testing.T) {
+func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultEnabledUsesAdvancedScheduler(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
 	ctx := context.Background()
@@ -279,7 +279,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabledUsesLega
 
 	store := svc.getOpenAIWSStateStore()
 	require.NoError(t, store.BindResponseAccount(ctx, groupID, "resp_disabled_001", 36001, time.Hour))
-	require.False(t, svc.isOpenAIAdvancedSchedulerEnabled(ctx))
+	require.True(t, svc.isOpenAIAdvancedSchedulerEnabled(ctx))
 
 	selection, decision, err := svc.SelectAccountWithScheduler(
 		ctx,
@@ -541,10 +541,10 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_EnabledUsesAdvancedPrev
 	require.True(t, decision.StickyPreviousHit)
 }
 
-func TestOpenAIGatewayService_OpenAIAccountSchedulerMetrics_DisabledNoOp(t *testing.T) {
+func TestOpenAIGatewayService_OpenAIAccountSchedulerMetrics_ExplicitDisabledNoOp(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
-	svc := &OpenAIGatewayService{}
+	svc := &OpenAIGatewayService{rateLimitService: newOpenAIAdvancedSchedulerRateLimitService("false")}
 	ttft := 120
 	svc.ReportOpenAIAccountScheduleResult(10, true, &ttft)
 	svc.RecordOpenAIAccountSwitch()
@@ -1446,7 +1446,7 @@ func TestDefaultOpenAIAccountScheduler_ReportSwitchAndSnapshot(t *testing.T) {
 func TestOpenAIGatewayService_SchedulerWrappersAndDefaults(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
-	svc := &OpenAIGatewayService{}
+	svc := &OpenAIGatewayService{rateLimitService: newOpenAIAdvancedSchedulerRateLimitService("false")}
 	ttft := 120
 	svc.ReportOpenAIAccountScheduleResult(10, true, &ttft)
 	svc.RecordOpenAIAccountSwitch()

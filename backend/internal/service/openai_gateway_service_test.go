@@ -469,6 +469,132 @@ func TestOpenAISelectAccountWithLoadAwareness_FiltersUnschedulableWhenNoConcurre
 	}
 }
 
+func TestOpenAISelectAccountWithLoadAwareness_SkipsFreeCodexUsageThreshold(t *testing.T) {
+	groupID := int64(1)
+	overLimit := Account{
+		ID:          1,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+		Credentials: map[string]any{"plan_type": "free"},
+		Extra:       map[string]any{"codex_7d_used_percent": 100.0},
+	}
+	available := Account{
+		ID:          2,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    1,
+		Credentials: map[string]any{"plan_type": "free"},
+		Extra:       map[string]any{"codex_7d_used_percent": 20.0},
+	}
+
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: []Account{overLimit, available}},
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, "", "gpt-5.5", nil)
+	if err != nil {
+		t.Fatalf("SelectAccountWithLoadAwareness error: %v", err)
+	}
+	if selection == nil || selection.Account == nil || selection.Account.ID != available.ID {
+		t.Fatalf("expected account %d, got %+v", available.ID, selection)
+	}
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
+func TestOpenAISelectAccountWithLoadAwareness_StickyFreeCodexUsageThresholdClearsSession(t *testing.T) {
+	sessionHash := "session-free-over-limit"
+	groupID := int64(1)
+	overLimit := Account{
+		ID:          1,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+		Credentials: map[string]any{"plan_type": "free"},
+		Extra:       map[string]any{"codex_7d_used_percent": 100.0},
+	}
+	available := Account{
+		ID:          2,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    1,
+		Credentials: map[string]any{"plan_type": "free"},
+		Extra:       map[string]any{"codex_7d_used_percent": 20.0},
+	}
+	cache := &stubGatewayCache{sessionBindings: map[string]int64{"openai:" + sessionHash: overLimit.ID}}
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: []Account{overLimit, available}},
+		cache:              cache,
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, sessionHash, "gpt-5.5", nil)
+	if err != nil {
+		t.Fatalf("SelectAccountWithLoadAwareness error: %v", err)
+	}
+	if selection == nil || selection.Account == nil || selection.Account.ID != available.ID {
+		t.Fatalf("expected account %d, got %+v", available.ID, selection)
+	}
+	if cache.deletedSessions["openai:"+sessionHash] != 1 {
+		t.Fatalf("expected over-limit sticky session to be deleted")
+	}
+	if cache.sessionBindings["openai:"+sessionHash] != available.ID {
+		t.Fatalf("expected sticky session to rebind to account %d", available.ID)
+	}
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
+func TestOpenAISelectAccountForModelWithExclusions_SkipsFreeCodexUsageThresholdWithoutConcurrencyService(t *testing.T) {
+	overLimit := Account{
+		ID:          1,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+		Credentials: map[string]any{"plan_type": "free"},
+		Extra:       map[string]any{"codex_7d_used_percent": 100.0},
+	}
+	available := Account{
+		ID:          2,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    1,
+		Credentials: map[string]any{"plan_type": "free"},
+		Extra:       map[string]any{"codex_7d_used_percent": 20.0},
+	}
+	svc := &OpenAIGatewayService{accountRepo: stubOpenAIAccountRepo{accounts: []Account{overLimit, available}}}
+
+	account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "gpt-5.5", nil)
+	if err != nil {
+		t.Fatalf("SelectAccountForModelWithExclusions error: %v", err)
+	}
+	if account == nil || account.ID != available.ID {
+		t.Fatalf("expected account %d, got %+v", available.ID, account)
+	}
+}
+
 func TestOpenAISelectAccountForModelWithExclusions_StickyUnschedulableClearsSession(t *testing.T) {
 	sessionHash := "session-1"
 	repo := stubOpenAIAccountRepo{

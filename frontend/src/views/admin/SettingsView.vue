@@ -6594,7 +6594,7 @@ const form = reactive<SettingsForm>({
   max_claude_code_version: "",
   // 分组隔离
   allow_ungrouped_key_scheduling: false,
-  openai_advanced_scheduler_enabled: false,
+  openai_advanced_scheduler_enabled: true,
   // Gateway forwarding behavior
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,

@@ -12,13 +12,15 @@ import (
 type SettingHandler struct {
 	settingService *service.SettingService
 	version        string
+	ourVersion     string
 }
 
 // NewSettingHandler 创建公开设置处理器
-func NewSettingHandler(settingService *service.SettingService, version string) *SettingHandler {
+func NewSettingHandler(settingService *service.SettingService, version, ourVersion string) *SettingHandler {
 	return &SettingHandler{
 		settingService: settingService,
 		version:        version,
+		ourVersion:     ourVersion,
 	}
 }
 
@@ -73,6 +75,7 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		BackendModeEnabled:               settings.BackendModeEnabled,
 		PaymentEnabled:                   settings.PaymentEnabled,
 		Version:                          h.version,
+		OurVersion:                       h.ourVersion,
 		BalanceLowNotifyEnabled:          settings.BalanceLowNotifyEnabled,
 		AccountQuotaNotifyEnabled:        settings.AccountQuotaNotifyEnabled,
 		BalanceLowNotifyThreshold:        settings.BalanceLowNotifyThreshold,

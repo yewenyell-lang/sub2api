@@ -1,0 +1,17 @@
+:5089 {
+	import /etc/sub2api/bluegreen/active-upstream.caddy
+
+	request_body {
+		max_size 256MB
+	}
+
+	log {
+		output file /var/log/caddy/sub2api-bluegreen.log {
+			roll_size 50mb
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format json
+		level INFO
+	}
+}

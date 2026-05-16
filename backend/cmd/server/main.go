@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/server/routes"
 	"github.com/Wei-Shaw/sub2api/internal/setup"
 	"github.com/Wei-Shaw/sub2api/internal/web"
 
@@ -33,10 +34,11 @@ var embeddedVersion string
 
 // Build-time variables (can be set by ldflags)
 var (
-	Version   = ""
-	Commit    = "unknown"
-	Date      = "unknown"
-	BuildType = "source" // "source" for manual builds, "release" for CI builds (set by ldflags)
+	Version    = ""
+	Commit     = "unknown"
+	Date       = "unknown"
+	BuildType  = "source" // "source" for manual builds, "release" for CI builds (set by ldflags)
+	OurVersion = ""       // downstream/local build identifier, separate from upstream Version
 )
 
 func init() {
@@ -64,6 +66,10 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
+		if strings.TrimSpace(OurVersion) != "" {
+			log.Printf("Sub2API %s (our version: %s, commit: %s, built: %s)\n", Version, OurVersion, Commit, Date)
+			return
+		}
 		log.Printf("Sub2API %s (commit: %s, built: %s)\n", Version, Commit, Date)
 		return
 	}
@@ -141,8 +147,9 @@ func runMainServer() {
 	}
 
 	buildInfo := handler.BuildInfo{
-		Version:   Version,
-		BuildType: BuildType,
+		Version:    Version,
+		OurVersion: OurVersion,
+		BuildType:  BuildType,
 	}
 
 	app, err := initializeApplication(buildInfo)
@@ -165,9 +172,11 @@ func runMainServer() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
+	routes.SetDraining(true)
+	shutdownTimeout := cfg.Server.GracefulShutdownDuration()
+	log.Printf("Shutting down server, waiting up to %s for in-flight requests...", shutdownTimeout)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
 	if err := app.Server.Shutdown(ctx); err != nil {

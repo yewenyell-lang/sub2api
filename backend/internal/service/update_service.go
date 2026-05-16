@@ -50,15 +50,17 @@ type UpdateService struct {
 	cache          UpdateCache
 	githubClient   GitHubReleaseClient
 	currentVersion string
+	ourVersion     string
 	buildType      string // "source" for manual builds, "release" for CI builds
 }
 
 // NewUpdateService creates a new UpdateService
-func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType string) *UpdateService {
+func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, version, ourVersion, buildType string) *UpdateService {
 	return &UpdateService{
 		cache:          cache,
 		githubClient:   githubClient,
 		currentVersion: version,
+		ourVersion:     ourVersion,
 		buildType:      buildType,
 	}
 }
@@ -71,6 +73,7 @@ type UpdateInfo struct {
 	ReleaseInfo    *ReleaseInfo `json:"release_info,omitempty"`
 	Cached         bool         `json:"cached"`
 	Warning        string       `json:"warning,omitempty"`
+	OurVersion     string       `json:"our_version,omitempty"`
 	BuildType      string       `json:"build_type"` // "source" or "release"
 }
 
@@ -128,6 +131,7 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 			LatestVersion:  s.currentVersion,
 			HasUpdate:      false,
 			Warning:        err.Error(),
+			OurVersion:     s.ourVersion,
 			BuildType:      s.buildType,
 		}, nil
 	}
@@ -301,8 +305,9 @@ func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, er
 			HTMLURL:     release.HTMLURL,
 			Assets:      assets,
 		},
-		Cached:    false,
-		BuildType: s.buildType,
+		Cached:     false,
+		OurVersion: s.ourVersion,
+		BuildType:  s.buildType,
 	}, nil
 }
 
@@ -492,6 +497,7 @@ func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {
 		HasUpdate:      compareVersions(s.currentVersion, cached.Latest) < 0,
 		ReleaseInfo:    cached.ReleaseInfo,
 		Cached:         true,
+		OurVersion:     s.ourVersion,
 		BuildType:      s.buildType,
 	}, nil
 }

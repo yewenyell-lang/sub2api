@@ -59,6 +59,8 @@ const (
 	openAICodexSnapshotPersistMinInterval = 30 * time.Second
 )
 
+const openAIAccountSchedulingSkipFreeCodexUsageThreshold = "openai_free_codex_usage_threshold"
+
 // OpenAI allowed headers whitelist (for non-passthrough).
 var openaiAllowedHeaders = map[string]bool{
 	"accept-language":       true,
@@ -1289,17 +1291,24 @@ func openAICompactSupportTier(account *Account) int {
 
 // isOpenAIAccountEligibleForRequest centralises the schedulable / OpenAI / model /
 // compact-support checks used during account selection.
-func isOpenAIAccountEligibleForRequest(account *Account, requestedModel string, requireCompact bool) bool {
+func openAIAccountSchedulingSkipReason(account *Account, requestedModel string, requireCompact bool) string {
 	if account == nil || !account.IsSchedulable() || !account.IsOpenAI() {
-		return false
+		return "not_schedulable_openai_account"
+	}
+	if account.ShouldSkipOpenAIFreeSchedulingAt90Percent() {
+		return openAIAccountSchedulingSkipFreeCodexUsageThreshold
 	}
 	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
-		return false
+		return "model_not_supported"
 	}
 	if requireCompact && openAICompactSupportTier(account) == 0 {
-		return false
+		return "compact_not_supported"
 	}
-	return true
+	return ""
+}
+
+func isOpenAIAccountEligibleForRequest(account *Account, requestedModel string, requireCompact bool) bool {
+	return openAIAccountSchedulingSkipReason(account, requestedModel, requireCompact) == ""
 }
 
 // prioritizeOpenAICompactAccounts re-orders a slice so that accounts with known
@@ -1418,7 +1427,10 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 
 	// 验证账号是否可用于当前请求
 	// Verify account is usable for current request
-	if !isOpenAIAccountEligibleForRequest(account, requestedModel, false) {
+	if reason := openAIAccountSchedulingSkipReason(account, requestedModel, requireCompact); reason != "" {
+		if reason == openAIAccountSchedulingSkipFreeCodexUsageThreshold {
+			_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+		}
 		return nil
 	}
 	account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, requestedModel, requireCompact)
@@ -1614,7 +1626,16 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if clearSticky {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				}
-				if !clearSticky && isOpenAIAccountEligibleForRequest(account, requestedModel, false) {
+				if !clearSticky {
+					skipReason := openAIAccountSchedulingSkipReason(account, requestedModel, requireCompact)
+					if skipReason == openAIAccountSchedulingSkipFreeCodexUsageThreshold {
+						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+					}
+					if skipReason != "" {
+						account = nil
+					}
+				}
+				if !clearSticky && account != nil {
 					account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, requestedModel, requireCompact)
 					if account == nil {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -1654,6 +1675,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		// re-check schedulability here so recently rate-limited/overloaded accounts
 		// are not selected again before the bucket is rebuilt.
 		if !acc.IsSchedulable() {
+			continue
+		}
+		if acc.ShouldSkipOpenAIFreeSchedulingAt90Percent() {
 			continue
 		}
 		if requestedModel != "" && !acc.IsModelSupported(requestedModel) {

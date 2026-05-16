@@ -81,7 +81,7 @@ func ProvideSystemHandler(updateService *service.UpdateService, lockService *ser
 
 // ProvideSettingHandler creates SettingHandler with version from BuildInfo
 func ProvideSettingHandler(settingService *service.SettingService, buildInfo BuildInfo) *SettingHandler {
-	return NewSettingHandler(settingService, buildInfo.Version)
+	return NewSettingHandler(settingService, buildInfo.Version, buildInfo.OurVersion)
 }
 
 // ProvideHandlers creates the Handlers struct
