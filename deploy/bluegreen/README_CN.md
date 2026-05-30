@@ -1,5 +1,22 @@
 # Sub2API 蓝绿发布
 
+> 注意：本目录同时保留上游的二进制+Caddy 蓝绿方案，以及本 fork 生产环境使用的本地构建+Docker+Nginx 蓝绿方案。
+> `api.jinpai.lat` / `dex.jinpai.lat` 当前生产服务器使用 Docker+Nginx 方案：本地执行 `local-build-and-deploy.ps1`，远端执行 `remote-docker-bluegreen.sh`，Nginx upstream 通过 `/etc/nginx/snippets/sub2api-upstream.conf` 切换到 blue/green 容器端口。
+
+## Docker + Nginx 生产方案（本 fork）
+
+在本地构建并部署到专属服务器：
+
+```powershell
+./deploy/bluegreen/local-build-and-deploy.ps1
+```
+
+脚本会在本地完成前后端构建与镜像打包，上传产物到远端，再由 `remote-docker-bluegreen.sh` 启动备用颜色容器、健康检查、切换 Nginx upstream、reload Nginx，并保留另一颜色容器用于回滚。
+
+此方案适用于当前生产 Docker 部署；不要用下方 Caddy/systemd 脚本覆盖生产 Nginx upstream 配置。
+
+---
+
 这套配置用于二进制部署场景，目标是在更新时避免中断正在执行的流式请求。
 
 ## 架构
