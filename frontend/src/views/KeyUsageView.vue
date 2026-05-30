@@ -269,6 +269,26 @@
             </div>
           </div>
 
+          <!-- Group Rate Card -->
+          <div
+            v-if="groupRateRows.length > 0"
+            class="fade-up fade-up-delay-3 rounded-2xl border border-gray-200 bg-white/90 backdrop-blur-sm overflow-hidden dark:border-dark-700 dark:bg-dark-900/90"
+          >
+            <div class="px-8 py-5 border-b border-gray-200 dark:border-dark-700">
+              <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.groupRate') }}</h3>
+            </div>
+            <div class="grid grid-cols-1 gap-px bg-gray-100 dark:bg-dark-800 sm:grid-cols-2 lg:grid-cols-4">
+              <div
+                v-for="row in groupRateRows"
+                :key="row.label"
+                class="bg-white px-6 py-4 dark:bg-dark-900"
+              >
+                <div class="text-xs text-gray-500 dark:text-dark-400 mb-1">{{ row.label }}</div>
+                <div class="text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{{ row.value }}</div>
+              </div>
+            </div>
+          </div>
+
           <!-- Usage Stats Card -->
           <div
             v-if="usageStatCells.length > 0"
@@ -286,6 +306,111 @@
                 <div class="text-xs text-gray-500 dark:text-dark-400 mb-1">{{ cell.label }}</div>
                 <div class="text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{{ cell.value }}</div>
               </div>
+            </div>
+          </div>
+
+          <!-- Recent Requests Table -->
+          <div
+            v-if="showRecentRequests"
+            class="fade-up fade-up-delay-4 rounded-2xl border border-gray-200 bg-white/90 backdrop-blur-sm overflow-hidden dark:border-dark-700 dark:bg-dark-900/90"
+          >
+            <div class="px-8 py-5 border-b border-gray-200 dark:border-dark-700">
+              <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.recentRequests') }}</h3>
+            </div>
+            <div v-if="recentRequestRows.length > 0" class="overflow-x-auto">
+              <table class="w-full">
+                <thead>
+                  <tr class="border-b border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-950">
+                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.time') }}</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.model') }}</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.endpoint') }}</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.requestType') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.totalTokens') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.cost') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.rateMultiplier') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.duration') }}</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.requestId') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="row in recentRequestRows"
+                    :key="row.id"
+                    class="border-b border-gray-100 last:border-b-0 dark:border-dark-800"
+                  >
+                    <td class="px-4 py-3 text-sm whitespace-nowrap text-gray-700 dark:text-dark-200">{{ formatDateTime(row.created_at) }}</td>
+                    <td class="px-4 py-3 text-sm font-medium whitespace-nowrap text-gray-900 dark:text-white">{{ row.model || '-' }}</td>
+                    <td class="px-4 py-3 text-sm whitespace-nowrap text-gray-700 dark:text-dark-200">{{ row.inbound_endpoint || '-' }}</td>
+                    <td class="px-4 py-3 text-sm whitespace-nowrap text-gray-700 dark:text-dark-200">{{ row.request_type || '-' }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right text-gray-700 dark:text-dark-200">{{ fmtNum(totalRequestTokens(row)) }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right font-medium text-gray-900 dark:text-white">{{ usd(row.actual_cost) }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right text-gray-700 dark:text-dark-200">{{ formatMultiplier(row.rate_multiplier) }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right text-gray-700 dark:text-dark-200">{{ formatDuration(row.duration_ms) }}</td>
+                    <td class="px-4 py-3 text-sm font-mono text-gray-600 dark:text-dark-300">
+                      <span class="block max-w-[220px] truncate" :title="row.request_id">{{ row.request_id || '-' }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-else class="px-8 py-8 text-center text-sm text-gray-500 dark:text-dark-400">
+              {{ t('keyUsage.noRecentRequests') }}
+            </div>
+          </div>
+
+          <!-- Daily Usage Table -->
+          <div
+            v-if="showDailyUsage"
+            class="fade-up fade-up-delay-4 rounded-2xl border border-gray-200 bg-white/90 backdrop-blur-sm overflow-hidden dark:border-dark-700 dark:bg-dark-900/90"
+          >
+            <div class="flex flex-col gap-3 px-8 py-5 border-b border-gray-200 dark:border-dark-700 sm:flex-row sm:items-center sm:justify-between">
+              <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.dailyDetail') }}</h3>
+              <div class="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 dark:border-dark-700 dark:bg-dark-950">
+                <button
+                  v-for="option in dailyUsageOptions"
+                  :key="option.value"
+                  @click="setDailyUsageDays(option.value)"
+                  class="min-w-12 rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                  :class="dailyUsageDays === option.value
+                    ? 'bg-primary-500 text-white'
+                    : 'text-gray-600 hover:bg-gray-100 dark:text-dark-300 dark:hover:bg-dark-800'"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+            </div>
+            <div v-if="dailyUsageRows.length > 0" class="overflow-x-auto">
+              <table class="w-full">
+                <thead>
+                  <tr class="border-b border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-950">
+                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.date') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.requests') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.inputTokens') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.outputTokens') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.cacheReadTokens') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.cacheWriteTokens') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.cost') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="row in dailyUsageRows"
+                    :key="row.date"
+                    class="border-b border-gray-100 last:border-b-0 dark:border-dark-800"
+                  >
+                    <td class="px-4 py-3 text-sm font-medium whitespace-nowrap text-gray-900 dark:text-white">{{ row.date }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right text-gray-700 dark:text-dark-200">{{ fmtNum(row.requests) }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right text-gray-700 dark:text-dark-200">{{ fmtNum(row.input_tokens) }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right text-gray-700 dark:text-dark-200">{{ fmtNum(row.output_tokens) }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right text-gray-700 dark:text-dark-200">{{ fmtNum(row.cache_read_tokens) }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right text-gray-700 dark:text-dark-200">{{ fmtNum(row.cache_write_tokens) }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right font-medium text-gray-900 dark:text-white">{{ usd(row.actual_cost != null ? row.actual_cost : row.cost) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-else class="px-8 py-8 text-center text-sm text-gray-500 dark:text-dark-400">
+              {{ t('keyUsage.noDailyUsage') }}
             </div>
           </div>
 
@@ -408,12 +533,19 @@ type DateRangeKey = 'today' | '7d' | '30d' | 'custom'
 const currentRange = ref<DateRangeKey>('today')
 const customStartDate = ref('')
 const customEndDate = ref('')
+const dailyUsageDays = ref<7 | 30 | 90>(30)
 
 const dateRanges = computed(() => [
   { key: 'today' as const, label: t('keyUsage.dateRangeToday') },
   { key: '7d' as const, label: t('keyUsage.dateRange7d') },
   { key: '30d' as const, label: t('keyUsage.dateRange30d') },
   { key: 'custom' as const, label: t('keyUsage.dateRangeCustom') },
+])
+
+const dailyUsageOptions = computed(() => [
+  { value: 7 as const, label: t('keyUsage.dateRange7d') },
+  { value: 30 as const, label: t('keyUsage.dateRange30d') },
+  { value: 90 as const, label: t('keyUsage.dateRange90d') },
 ])
 
 function setDateRange(key: DateRangeKey) {
@@ -426,23 +558,37 @@ function setDateRange(key: DateRangeKey) {
 function getDateParams(): string {
   const now = new Date()
   const fmt = (d: Date) => d.toISOString().split('T')[0]
+  const params = new URLSearchParams()
 
   if (currentRange.value === 'custom') {
     if (customStartDate.value && customEndDate.value) {
-      return `start_date=${customStartDate.value}&end_date=${customEndDate.value}`
+      params.set('start_date', customStartDate.value)
+      params.set('end_date', customEndDate.value)
     }
-    return ''
+  } else {
+    const end = fmt(now)
+    let start: string
+    switch (currentRange.value) {
+      case 'today': start = end; break
+      case '7d': start = fmt(new Date(now.getTime() - 7 * 86400000)); break
+      case '30d': start = fmt(new Date(now.getTime() - 30 * 86400000)); break
+      default: start = fmt(new Date(now.getTime() - 30 * 86400000))
+    }
+    params.set('start_date', start)
+    params.set('end_date', end)
   }
+  params.set('days', String(dailyUsageDays.value))
+  params.set('timezone', getBrowserTimezone())
+  params.set('recent_limit', '10')
+  return params.toString()
+}
 
-  const end = fmt(now)
-  let start: string
-  switch (currentRange.value) {
-    case 'today': start = end; break
-    case '7d': start = fmt(new Date(now.getTime() - 7 * 86400000)); break
-    case '30d': start = fmt(new Date(now.getTime() - 30 * 86400000)); break
-    default: start = fmt(new Date(now.getTime() - 30 * 86400000))
+function setDailyUsageDays(days: 7 | 30 | 90) {
+  if (dailyUsageDays.value === days) return
+  dailyUsageDays.value = days
+  if (resultData.value && apiKey.value.trim()) {
+    queryKey()
   }
-  return `start_date=${start}&end_date=${end}`
 }
 
 // ==================== Ring Animation ====================
@@ -701,6 +847,22 @@ interface StatCell {
   value: string
 }
 
+const groupRateRows = computed<StatCell[]>(() => {
+  const group = resultData.value?.group
+  if (!group) return []
+
+  return [
+    { label: t('keyUsage.groupName'), value: group.name || '-' },
+    { label: t('keyUsage.groupPlatform'), value: group.platform || '-' },
+    { label: t('keyUsage.groupDefaultRate'), value: formatMultiplier(group.rate_multiplier) },
+    { label: t('keyUsage.userRate'), value: group.user_rate_multiplier == null ? t('keyUsage.notConfigured') : formatMultiplier(group.user_rate_multiplier) },
+    { label: t('keyUsage.effectiveRate'), value: formatMultiplier(group.effective_rate_multiplier) },
+    { label: t('keyUsage.rateSource'), value: group.rate_multiplier_source === 'user' ? t('keyUsage.rateSourceUser') : t('keyUsage.rateSourceGroup') },
+    { label: t('keyUsage.imageRate'), value: formatMultiplier(group.image_rate_multiplier) },
+    { label: t('keyUsage.imageRateMode'), value: group.image_rate_independent ? t('keyUsage.imageRateIndependent') : t('keyUsage.imageRateShared') },
+  ]
+})
+
 const usageStatCells = computed<StatCell[]>(() => {
   const usage = resultData.value?.usage
   if (!usage) return []
@@ -731,6 +893,47 @@ const usageStatCells = computed<StatCell[]>(() => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const modelStats = computed<any[]>(() => resultData.value?.model_stats || [])
 
+interface DailyUsageRow {
+  date: string
+  requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  cost: number
+  actual_cost?: number
+}
+
+const dailyUsageRows = computed<DailyUsageRow[]>(() => {
+  const rows = resultData.value?.daily_usage
+  return Array.isArray(rows) ? rows : []
+})
+
+const showDailyUsage = computed(() => Boolean(resultData.value && Array.isArray(resultData.value.daily_usage)))
+
+interface RecentRequestRow {
+  id: number
+  request_id: string
+  model: string
+  inbound_endpoint?: string
+  request_type?: string
+  input_tokens?: number
+  output_tokens?: number
+  cache_creation_tokens?: number
+  cache_read_tokens?: number
+  actual_cost?: number
+  rate_multiplier?: number
+  duration_ms?: number
+  created_at: string
+}
+
+const recentRequestRows = computed<RecentRequestRow[]>(() => {
+  const rows = resultData.value?.recent_requests
+  return Array.isArray(rows) ? rows : []
+})
+
+const showRecentRequests = computed(() => Boolean(resultData.value && Array.isArray(resultData.value.recent_requests)))
+
 // ==================== Utility Functions ====================
 
 function usd(value: number | null | undefined): string {
@@ -743,11 +946,45 @@ function fmtNum(val: number | null | undefined): string {
   return val.toLocaleString()
 }
 
+function formatMultiplier(val: number | null | undefined): string {
+  if (val == null) return '-'
+  return `${Number(val).toFixed(2)}x`
+}
+
+function formatDuration(val: number | null | undefined): string {
+  if (val == null) return '-'
+  return `${Math.round(val)} ms`
+}
+
+function totalRequestTokens(row: RecentRequestRow): number {
+  return (row.input_tokens || 0) + (row.output_tokens || 0) + (row.cache_creation_tokens || 0) + (row.cache_read_tokens || 0)
+}
+
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return '-'
   const d = new Date(iso)
   const loc = locale.value === 'zh' ? 'zh-CN' : 'en-US'
   return d.toLocaleDateString(loc, { year: 'numeric', month: 'long', day: 'numeric' })
+}
+
+function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '-'
+  const loc = locale.value === 'zh' ? 'zh-CN' : 'en-US'
+  return d.toLocaleString(loc, {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  })
+}
+
+function getBrowserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {
+    return 'UTC'
+  }
 }
 
 // ==================== API Query ====================

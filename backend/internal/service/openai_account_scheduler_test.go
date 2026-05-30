@@ -299,36 +299,36 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultEnabledUsesAdvan
 	require.False(t, decision.StickyPreviousHit)
 }
 
-func TestAccount_ShouldSkipOpenAIFreeSchedulingAt90Percent(t *testing.T) {
+func TestAccount_ShouldSkipOpenAIFreeSchedulingAtUsageThreshold(t *testing.T) {
 	tests := []struct {
 		name    string
 		account *Account
 		want    bool
 	}{
 		{
-			name: "openai free over 90 percent on 7d",
+			name: "openai free over threshold on 7d",
 			account: &Account{
-				Platform: PlatformOpenAI,
+				Platform:    PlatformOpenAI,
 				Credentials: map[string]any{"plan_type": "free"},
-				Extra: map[string]any{"codex_7d_used_percent": 91.0},
+				Extra:       map[string]any{"codex_7d_used_percent": 85.0},
 			},
 			want: true,
 		},
 		{
-			name: "openai free under 90 percent",
+			name: "openai free under threshold",
 			account: &Account{
-				Platform: PlatformOpenAI,
+				Platform:    PlatformOpenAI,
 				Credentials: map[string]any{"plan_type": "free"},
-				Extra: map[string]any{"codex_5h_used_percent": 89.0},
+				Extra:       map[string]any{"codex_5h_used_percent": 84.9},
 			},
 			want: false,
 		},
 		{
 			name: "openai plus unaffected",
 			account: &Account{
-				Platform: PlatformOpenAI,
+				Platform:    PlatformOpenAI,
 				Credentials: map[string]any{"plan_type": "plus"},
-				Extra: map[string]any{"codex_5h_used_percent": 99.0},
+				Extra:       map[string]any{"codex_5h_used_percent": 99.0},
 			},
 			want: false,
 		},
@@ -336,12 +336,12 @@ func TestAccount_ShouldSkipOpenAIFreeSchedulingAt90Percent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, tt.account.ShouldSkipOpenAIFreeSchedulingAt90Percent())
+			require.Equal(t, tt.want, tt.account.ShouldSkipOpenAIFreeSchedulingAtUsageThreshold())
 		})
 	}
 }
 
-func TestOpenAIAccountScheduler_SelectByLoadBalance_SkipsOpenAIFreeAt90Percent(t *testing.T) {
+func TestOpenAIAccountScheduler_SelectByLoadBalance_SkipsOpenAIFreeAtUsageThreshold(t *testing.T) {
 	ctx := context.Background()
 	accounts := []Account{
 		{
@@ -353,7 +353,7 @@ func TestOpenAIAccountScheduler_SelectByLoadBalance_SkipsOpenAIFreeAt90Percent(t
 			Concurrency: 1,
 			Priority:    0,
 			Credentials: map[string]any{"plan_type": "free"},
-			Extra:       map[string]any{"codex_7d_used_percent": 91.0},
+			Extra:       map[string]any{"codex_7d_used_percent": 85.0},
 		},
 		{
 			ID:          41002,

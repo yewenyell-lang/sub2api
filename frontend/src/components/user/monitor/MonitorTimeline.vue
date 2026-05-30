@@ -13,11 +13,11 @@
     >
       {{ t('monitorCommon.maintenancePaused') }}
     </div>
-    <div v-else class="flex items-end gap-[2px] h-5 w-full">
+    <div v-else class="grid h-5 w-full items-end gap-px overflow-hidden" :style="barGridStyle">
       <div
         v-for="(bar, idx) in displayBars"
         :key="idx"
-        class="flex-1 min-w-[3px] rounded-sm"
+        class="min-w-0 rounded-sm"
         :class="bar.colorClass"
         :style="{ height: bar.heightPct + '%' }"
         :title="bar.title"
@@ -52,6 +52,10 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n()
 const { statusLabel, formatLatency, formatRelativeTime } = useChannelMonitorFormat()
+
+const barGridStyle = computed(() => ({
+  gridTemplateColumns: `repeat(${props.length}, minmax(0, 1fr))`,
+}))
 
 interface Bar {
   colorClass: string

@@ -15,6 +15,13 @@ func RegisterUserRoutes(
 	jwtAuth middleware.JWTAuthMiddleware,
 	settingService *service.SettingService,
 ) {
+	// 公开渠道监控（游客只读）
+	publicMonitors := v1.Group("/public/channel-monitors")
+	{
+		publicMonitors.GET("", h.ChannelMonitor.List)
+		publicMonitors.GET("/:id/status", h.ChannelMonitor.GetStatus)
+	}
+
 	authenticated := v1.Group("")
 	authenticated.Use(gin.HandlerFunc(jwtAuth))
 	authenticated.Use(middleware.BackendModeUserGuard(settingService))
@@ -31,6 +38,7 @@ func RegisterUserRoutes(
 			user.POST("/account-bindings/email", h.User.BindEmailIdentity)
 			user.DELETE("/account-bindings/:provider", h.User.UnbindIdentity)
 			user.POST("/auth-identities/bind/start", h.User.StartIdentityBinding)
+			user.GET("/api-keys/:id/usage/daily", h.Usage.GetMyAPIKeyDailyUsage)
 
 			// 通知邮箱管理
 			notifyEmail := user.Group("/notify-email")

@@ -61,7 +61,7 @@ export interface UserMonitorDetail {
  * List all monitor views available to the current user.
  */
 export async function list(options?: { signal?: AbortSignal }): Promise<UserMonitorListResponse> {
-  const { data } = await apiClient.get<UserMonitorListResponse>('/channel-monitors', {
+  const { data } = await apiClient.get<UserMonitorListResponse>('/public/channel-monitors', {
     signal: options?.signal,
   })
   return data
@@ -71,7 +71,7 @@ export async function list(options?: { signal?: AbortSignal }): Promise<UserMoni
  * Get detailed status (multi-window availability + latency) for a single monitor.
  */
 export async function status(id: number): Promise<UserMonitorDetail> {
-  const { data } = await apiClient.get<UserMonitorDetail>(`/channel-monitors/${id}/status`)
+  const { data } = await apiClient.get<UserMonitorDetail>(`/public/channel-monitors/${id}/status`)
   return data
 }
 

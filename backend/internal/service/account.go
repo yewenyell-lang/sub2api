@@ -104,7 +104,9 @@ func (a *Account) EffectiveLoadFactor() int {
 	return 1
 }
 
-func (a *Account) ShouldSkipOpenAIFreeSchedulingAt90Percent() bool {
+const openAIFreeCodexSchedulingSkipUsedPercentThreshold = 85.0
+
+func (a *Account) ShouldSkipOpenAIFreeSchedulingAtUsageThreshold() bool {
 	if a == nil || a.Platform != PlatformOpenAI {
 		return false
 	}
@@ -113,10 +115,10 @@ func (a *Account) ShouldSkipOpenAIFreeSchedulingAt90Percent() bool {
 	}
 	used5h, ok5h := a.extraFloat64("codex_5h_used_percent")
 	used7d, ok7d := a.extraFloat64("codex_7d_used_percent")
-	if ok5h && used5h >= 90 {
+	if ok5h && used5h >= openAIFreeCodexSchedulingSkipUsedPercentThreshold {
 		return true
 	}
-	if ok7d && used7d >= 90 {
+	if ok7d && used7d >= openAIFreeCodexSchedulingSkipUsedPercentThreshold {
 		return true
 	}
 	return false
