@@ -143,3 +143,9 @@ docs/*
 frontend/coverage/
 aicodex
 output/
+
+# Vitest / Vite cache at repo root
+.vite/
+
+# agent-cli local config (contains SSH credentials)
+.agent-cli/
