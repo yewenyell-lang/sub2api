@@ -18,13 +18,15 @@ type SettingHandler struct {
 	settingService           *service.SettingService
 	notificationEmailService *service.NotificationEmailService
 	version                  string
+	ourVersion               string
 }
 
 // NewSettingHandler 创建公开设置处理器
-func NewSettingHandler(settingService *service.SettingService, version string) *SettingHandler {
+func NewSettingHandler(settingService *service.SettingService, version, ourVersion string) *SettingHandler {
 	return &SettingHandler{
 		settingService: settingService,
 		version:        version,
+		ourVersion:     ourVersion,
 	}
 }
 

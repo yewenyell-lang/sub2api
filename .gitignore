@@ -149,3 +149,6 @@ output/
 
 # agent-cli local config (contains SSH credentials)
 .agent-cli/
+
+# 本机交叉编译产物
+sub2api-linux-amd64
