@@ -192,6 +192,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	agentTaskRecoveryTried := false
+	rejectedFieldRetryState := newOpenAIResponsesRejectedFieldRetryState(body)
 	var resp *http.Response
 	for {
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
@@ -224,6 +225,18 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			if recoveryErr := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); recoveryErr != nil {
 				return nil, fmt.Errorf("agent identity task recovery failed: %w", recoveryErr)
 			}
+			continue
+		}
+
+		// 透传模式同样兼容上游显式拒绝的 Responses 字段（如 ChatGPT 账号不支持的
+		// max_output_tokens、input[n].namespace）：剥离被拒字段后原账号重试一次，
+		// 避免客户端收到无意义的 400。与 native 转发路径（openai_gateway_forward.go）
+		// 的重试行为保持一致。
+		if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, probeBody); retryErr != nil {
+			return nil, fmt.Errorf("normalize rejected Responses field retry body: %w", retryErr)
+		} else if changed && rejectedFieldRetryState.Allow(retryBody) {
+			body = retryBody
+			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying passthrough request after %s (account: %s)", reason, account.Name)
 			continue
 		}
 
