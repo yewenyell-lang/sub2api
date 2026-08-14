@@ -99,7 +99,11 @@ func (r *OpenAITokenRefresher) CanRefresh(account *Account) bool {
 }
 
 // NeedsRefresh 检查token是否需要刷新
-// expires_at 缺失且处于限流状态时需要刷新，防止限流期间 token 静默过期
+// expires_at 缺失时视为需要刷新（有 refresh_token 即可）。
+// 历史缺陷：expires_at 缺失且非限流时返回 false，导致批量导入（未写 expires_at）
+// 的账号 token 静默过期后永不刷新，请求持续 401（Upstream authentication failed）。
+// 修复后：expires_at 缺失 → 直接刷新（刷新成功后 BuildAccountCredentials 会回填
+// expires_at，后续按真实到期时间门控，不会过度刷新）。
 func (r *OpenAITokenRefresher) NeedsRefresh(account *Account, refreshWindow time.Duration) bool {
 	if account.IsOpenAIPersonalAccessToken() {
 		return false
@@ -109,7 +113,7 @@ func (r *OpenAITokenRefresher) NeedsRefresh(account *Account, refreshWindow time
 	}
 	expiresAt := account.GetCredentialAsTime("expires_at")
 	if expiresAt == nil {
-		return account.IsRateLimited()
+		return true
 	}
 
 	return time.Until(*expiresAt) < refreshWindow

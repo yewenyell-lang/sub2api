@@ -266,3 +266,86 @@ func TestOpenAITokenRefresher_CanRefresh(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAITokenRefresher_NeedsRefresh(t *testing.T) {
+	refresher := &OpenAITokenRefresher{}
+	refreshWindow := 30 * time.Minute
+
+	tests := []struct {
+		name        string
+		credentials map[string]any
+		wantRefresh bool
+	}{
+		{
+			name: "expires_at missing with refresh_token - must refresh",
+			credentials: map[string]any{
+				"access_token":  "at",
+				"refresh_token": "rt",
+			},
+			wantRefresh: true,
+		},
+		{
+			name: "expires_at missing and rate-limited - must refresh",
+			credentials: map[string]any{
+				"access_token":  "at",
+				"refresh_token": "rt",
+			},
+			wantRefresh: true,
+		},
+		{
+			name: "expires_at missing without refresh_token - cannot refresh",
+			credentials: map[string]any{
+				"access_token": "at",
+			},
+			wantRefresh: false,
+		},
+		{
+			name: "expires_at expired - must refresh",
+			credentials: map[string]any{
+				"access_token":  "at",
+				"refresh_token": "rt",
+				"expires_at":    "1000",
+			},
+			wantRefresh: true,
+		},
+		{
+			name: "expires_at within window - must refresh",
+			credentials: map[string]any{
+				"access_token":  "at",
+				"refresh_token": "rt",
+				"expires_at":    time.Now().Add(15 * time.Minute).Unix(),
+			},
+			wantRefresh: true,
+		},
+		{
+			name: "expires_at far future - no refresh",
+			credentials: map[string]any{
+				"access_token":  "at",
+				"refresh_token": "rt",
+				"expires_at":    "9999999999",
+			},
+			wantRefresh: false,
+		},
+		{
+			name: "personal access token - never refresh",
+			credentials: map[string]any{
+				"auth_mode":     OpenAIAuthModePersonalAccessToken,
+				"access_token":  "pat",
+				"refresh_token": "rt",
+			},
+			wantRefresh: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account := &Account{
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeOAuth,
+				Credentials: tt.credentials,
+			}
+			got := refresher.NeedsRefresh(account, refreshWindow)
+			require.Equal(t, tt.wantRefresh, got)
+		})
+	}
+}
