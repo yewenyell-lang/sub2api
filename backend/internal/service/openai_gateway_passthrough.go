@@ -704,6 +704,13 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	// 脱敏后的上游消息，而不是抹成通用文案。
 	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
 		writeOpenAIPassthroughErrorEnvelope(c, resp.StatusCode, resp.Header, upstreamMsg)
+	} else if isOpenAIDeterministicClientError(resp.StatusCode) && upstreamMsg != "" {
+		// 400 是确定性请求错误（参数非法等），同一请求换任何账号都会失败，
+		// 也不该 failover（shouldFailoverOpenAIPassthroughResponse 已保证）。
+		// 净化信封内保留脱敏后的上游消息，让客户端能定位参数问题
+		// （如 ChatGPT 账号不支持的 max_output_tokens），而不是抹成
+		// 无意义的 "Upstream request failed" 导致客户端误判为链路故障。
+		writeOpenAIPassthroughErrorEnvelope(c, resp.StatusCode, resp.Header, upstreamMsg)
 	} else {
 		writeSanitizedOpenAIPassthroughError(c, resp.StatusCode, resp.Header)
 	}

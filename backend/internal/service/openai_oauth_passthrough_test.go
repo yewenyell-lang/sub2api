@@ -1164,13 +1164,21 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 			wantMessage:  "Upstream request failed",
 		},
 		{
-			name:         "malicious valid json 4xx",
+			name:         "deterministic 400 keeps sanitized upstream message",
+			statusCode:   http.StatusBadRequest,
+			contentType:  "application/json",
+			responseBody: `{"error":{"message":"Unsupported parameter: max_output_tokens","type":"invalid_request_error"}}`,
+			wantStatus:   http.StatusBadRequest,
+			wantMessage:  "Unsupported parameter: max_output_tokens",
+		},
+		{
+			name:         "malicious valid json 4xx keeps sanitized message inside envelope",
 			statusCode:   http.StatusBadRequest,
 			contentType:  "application/json",
 			responseBody: `{"error":{"message":"secret-upstream.example invalid parameter","type":"invalid_request_error","code":"upstream_secret_code","param":"private_field","internal_token":"sk-upstream-secret"},"rate_limit":{"remaining":0,"reset":"internal-window"},"debug":{"admin":"root"},"redirect":"https://secret-upstream.example/admin"}`,
 			retryAfter:   "not-a-valid-delay",
 			wantStatus:   http.StatusBadRequest,
-			wantMessage:  "Upstream request failed",
+			wantMessage:  "secret-upstream.example invalid parameter",
 		},
 	}
 
@@ -1244,8 +1252,10 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 			require.False(t, gjson.Get(rec.Body.String(), "error.code").Exists())
 			require.False(t, gjson.Get(rec.Body.String(), "error.param").Exists())
 			require.False(t, gjson.Get(rec.Body.String(), "rate_limit").Exists())
-			require.NotContains(t, rec.Body.String(), "secret-upstream.example")
 			require.NotContains(t, rec.Body.String(), "sk-upstream-secret")
+			require.NotContains(t, rec.Body.String(), "upstream_secret_code")
+			require.NotContains(t, rec.Body.String(), "private_field")
+			require.NotContains(t, rec.Body.String(), "internal-window")
 			require.NotContains(t, err.Error(), "secret-upstream.example")
 		})
 	}
@@ -1311,9 +1321,9 @@ func TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorBeforeKeepaliveIsSin
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.True(t, gjson.Valid(rec.Body.String()))
 	require.Equal(t, "upstream_error", gjson.Get(rec.Body.String(), "error.type").String())
+	require.Equal(t, "secret-upstream.example invalid request", gjson.Get(rec.Body.String(), "error.message").String())
 	require.NotContains(t, rec.Body.String(), "event:")
 	require.NotContains(t, rec.Body.String(), ": keepalive")
-	require.NotContains(t, rec.Body.String(), "secret-upstream.example")
 }
 
 func TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorAfterKeepaliveIsFailedSSE(t *testing.T) {
@@ -1350,8 +1360,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorAfterKeepaliveIsFail
 	require.Equal(t, "response.failed", events[0][0])
 	require.Equal(t, "failed", gjson.Get(events[0][1], "response.status").String())
 	require.Equal(t, "upstream_error", gjson.Get(events[0][1], "response.error.code").String())
-	require.Equal(t, "Upstream request failed", gjson.Get(events[0][1], "response.error.message").String())
-	require.NotContains(t, rec.Body.String(), "secret-upstream.example")
+	require.Equal(t, "secret-upstream.example invalid request", gjson.Get(events[0][1], "response.error.message").String())
 }
 
 func TestOpenAIGatewayService_OpenAIPassthrough_RetryableStatusesTriggerFailover(t *testing.T) {
