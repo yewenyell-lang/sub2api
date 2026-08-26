@@ -403,7 +403,7 @@ func openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx context.Con
 	}
 	if account.IsOpenAI() {
 		if account.ShouldSkipOpenAIFreeSchedulingAtUsageThreshold() {
-			return false
+			return "free_plan_usage_threshold"
 		}
 		if paused, reason := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
 			// Debug level: this fires per-candidate on the scheduling hot path, so Info
@@ -964,7 +964,12 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 
 	// 验证账号是否可用于当前请求
 	// Verify account is usable for current request
-	if !isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, false, requiredCapability) {
+	if reason := openAICompatibleAccountEligibilityFailureReason(ctx, account, platform, requestedModel, false, requiredCapability); reason != "" {
+		// fork 行为：free 账号用量超限是持续性状态，清除粘性绑定避免会话钉死在不可用账号；
+		// 其余瞬时性失败沿用上游语义（保留绑定，见 "preserve sticky binding on capacity spillover"）。
+		if reason == "free_plan_usage_threshold" {
+			_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+		}
 		return nil
 	}
 	if !parentHealthyForShadow(account, s.parentAccountLookup(ctx)) {
@@ -1191,7 +1196,16 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if clearSticky {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				}
-				if !clearSticky && isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, false, requiredCapability) {
+				stickyIneligibleReason := ""
+				if !clearSticky {
+					stickyIneligibleReason = openAICompatibleAccountEligibilityFailureReason(ctx, account, platform, requestedModel, false, requiredCapability)
+					// fork 行为：free 账号用量超限为持续性状态，主动清除粘性绑定；
+					// 其余瞬时性失败保留绑定（上游 capacity spillover 语义）。
+					if stickyIneligibleReason == "free_plan_usage_threshold" {
+						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+					}
+				}
+				if !clearSticky && stickyIneligibleReason == "" {
 					account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, groupID, platform, requestedModel, requireCompact, requiredCapability)
 					if account == nil {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
