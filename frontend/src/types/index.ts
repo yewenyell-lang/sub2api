@@ -1170,6 +1170,8 @@ export interface Account {
   credentials_status?: Record<string, boolean>
   ollama_cloud_usage?: OllamaCloudUsageState
   codex_turn_tickets?: Array<{
+    standby_expires_at?: string
+    probe?: { result: string; http_status?: number; checked_at: string; next_probe_at?: string }
     model: string
     length?: number
     ready: boolean

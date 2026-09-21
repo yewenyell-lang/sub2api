@@ -1071,6 +1071,162 @@ export async function refreshOllamaCloudUsage(id: number): Promise<OllamaCloudUs
   return data
 }
 
+export interface CodexHarvestFlowTicket {
+  model: string
+  length?: number
+  ready: boolean
+  remaining_seconds: number
+  blocked: boolean
+  expires_at?: string
+  standby_expires_at?: string
+  probe?: {
+    result?: string
+    http_status?: number
+    checked_at?: string
+    next_probe_at?: string
+  }
+}
+
+export interface CodexHarvestFlowAccount {
+  id: number
+  name: string
+  status: string
+  schedulable: boolean
+  skip_harvest?: boolean
+  in_scope?: boolean
+  tickets: CodexHarvestFlowTicket[]
+  ready_count: number
+  blocked_count: number
+  /** 当前可用性（后端按调度 SQL 口径计算）：available / rate_limited / overload /
+   *  temp_unschedulable / error / disabled / expired。老版本后端不返回该字段。 */
+  availability?: string
+  /** 被时间窗挡住时的预计恢复时间（ISO 字符串）。 */
+  recover_at?: string
+  /** 临时不可调度的原因原文（排查用）。 */
+  temp_unschedulable_reason?: string
+}
+
+export interface CodexHarvestFlowStage {
+  id: string
+  status: 'ok' | 'warn' | 'fail' | 'idle' | string
+  detail?: string
+  at?: string
+  node?: string
+  node_name?: string
+  model?: string
+  http_status?: number
+  length?: number
+  blocks?: number
+  expected_length?: number
+  expected_blocks?: number
+}
+
+export interface CodexHarvestFlowEvent {
+  id: string
+  at: string
+  stage: string
+  kind: string
+  account_id?: number
+  account_name?: string
+  model?: string
+  node?: string
+  node_name?: string
+  http_status?: number
+  length?: number
+  blocks?: number
+  expected_length?: number
+  expected_blocks?: number
+  accepted?: boolean
+  standby?: boolean
+  result?: string
+  reason?: string
+  detail?: string
+}
+
+export interface CodexHarvestFlowSnapshot {
+  generated_at: string
+  harvest: {
+    enabled: boolean
+    fail_closed: boolean
+    strategy: string
+    scope_mode?: string
+    account_policy?: string
+    group_ids?: number[]
+    models: string[]
+    target_length: number
+    probe_interval_seconds: number
+    cooldown_seconds: number
+    attempt_timeout_seconds?: number
+    refresh_before_seconds?: number
+    max_probes_per_round: number
+    harvest_proxy?: string
+  }
+  sidecar: {
+    mode?: 'mihomo' | 'external' | 'unconfigured'
+    reachable: boolean
+    source?: string
+    controller?: string
+    group?: string
+    type?: string
+    now?: string
+    now_name?: string
+    all_count?: number
+    error?: string
+    observed_at?: string
+  }
+  stages: CodexHarvestFlowStage[]
+  accounts: CodexHarvestFlowAccount[]
+  counts: {
+    probe_hit: number
+    probe_miss: number
+    ticket_accept: number
+    ticket_reject: number
+    select_ok: number
+    select_skip: number
+    select_fail: number
+    tickets_ready: number
+    tickets_blocked: number
+  }
+  events: CodexHarvestFlowEvent[]
+}
+
+export async function getCodexHarvestFlow(): Promise<CodexHarvestFlowSnapshot> {
+  const { data } = await apiClient.get<CodexHarvestFlowSnapshot>('/admin/accounts/codex-harvest-flow')
+  return data
+}
+
+export async function updateCodexSkipHarvest(id: number, skipHarvest: boolean): Promise<{ account_id: number; skip_harvest: boolean }> {
+  const { data } = await apiClient.put<{ account_id: number; skip_harvest: boolean }>(`/admin/accounts/${id}/codex-skip-harvest`, {
+    skip_harvest: skipHarvest
+  })
+  return data
+}
+
+export interface CodexHarvestConfigPayload {
+  probe_interval_seconds: number
+  max_probes_per_round: number
+  cooldown_seconds: number
+  attempt_timeout_seconds: number
+  refresh_before_seconds: number
+}
+
+export async function updateCodexHarvestConfig(payload: CodexHarvestConfigPayload): Promise<{ message: string }> {
+  // admin 面整体偏慢（实测 3~25s），默认 30s 超时会把已经落库的请求误判为失败，
+  // 这里单独放宽到 60s。
+  const { data } = await apiClient.put<{ message: string }>('/admin/accounts/codex-harvest-flow/config', payload, {
+    timeout: 60000,
+  })
+  return data
+}
+
+export interface ManualHarvestRequestPayload {
+  models: string[]
+  probe_interval_seconds: number
+  rate_limit_cooldown_seconds: number
+  max_attempts: number
+  stop_on_success: boolean
+}
+
 export const accountsAPI = {
   list,
   listWithEtag,
@@ -1134,7 +1290,10 @@ export const accountsAPI = {
   saveOllamaCloudUsageSession,
   deleteOllamaCloudUsageSession,
   setOllamaCloudUsageAutoRefresh,
-  refreshOllamaCloudUsage
+  refreshOllamaCloudUsage,
+  getCodexHarvestFlow,
+  updateCodexSkipHarvest,
+  updateCodexHarvestConfig,
 }
 
 export default accountsAPI

@@ -286,7 +286,8 @@ func (s *SettingService) GetOpenAICodexTicketEnabled(ctx context.Context, fallba
 		}
 	}
 	resultCh := s.openAICodexTicketEnabledSF.DoChan(SettingKeyOpenAICodexTicketEnabled, func() (any, error) {
-		if cached, ok := s.openAICodexTicketEnabledCache.Load().(*cachedOpenAICodexTicketEnabled); ok && cached != nil {
+		snapshot := s.openAICodexTicketEnabledCache.Load()
+		if cached, ok := snapshot.(*cachedOpenAICodexTicketEnabled); ok && cached != nil {
 			if time.Now().UnixNano() < cached.expiresAt {
 				return cached.value, nil
 			}
@@ -307,7 +308,9 @@ func (s *SettingService) GetOpenAICodexTicketEnabled(ctx context.Context, fallba
 		if err == nil && strings.TrimSpace(value) != "" {
 			enabled = value == "true"
 		}
-		s.openAICodexTicketEnabledCache.Store(&cachedOpenAICodexTicketEnabled{
+		// An in-flight pre-write read must not overwrite invalidation or a
+		// newer value and make the freshly awakened harvester see stale state.
+		s.openAICodexTicketEnabledCache.CompareAndSwap(snapshot, &cachedOpenAICodexTicketEnabled{
 			value:     enabled,
 			expiresAt: time.Now().Add(openAICodexTicketEnabledCacheTTL).UnixNano(),
 		})
@@ -330,6 +333,139 @@ func (s *SettingService) InvalidateOpenAICodexTicketEnabledCache() {
 	}
 	s.openAICodexTicketEnabledSF.Forget(SettingKeyOpenAICodexTicketEnabled)
 	s.openAICodexTicketEnabledCache.Store(&cachedOpenAICodexTicketEnabled{expiresAt: 0})
+}
+
+type cachedOpenAICodexTicketFailClosed struct {
+	value     bool
+	expiresAt int64
+}
+
+const openAICodexTicketFailClosedCacheTTL = 5 * time.Second
+
+// GetOpenAICodexTicketFailClosed returns the live scheduling policy. A missing
+// setting is deliberately fail-open: harvesting and injection continue, but a
+// missing ticket does not take an otherwise usable account out of rotation.
+func (s *SettingService) GetOpenAICodexTicketFailClosed(ctx context.Context) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil || s == nil || s.settingRepo == nil {
+		return false
+	}
+	if cached, ok := s.openAICodexTicketFailClosedCache.Load().(*cachedOpenAICodexTicketFailClosed); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached.value
+	}
+	resultCh := s.openAICodexTicketFailClosedSF.DoChan(SettingKeyOpenAICodexTicketFailClosed, func() (any, error) {
+		snapshot := s.openAICodexTicketFailClosedCache.Load()
+		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAICodexTicketFailClosed)
+		if errors.Is(err, ErrSettingNotFound) {
+			value, err = "false", nil
+		}
+		if err != nil {
+			if cached, ok := s.openAICodexTicketFailClosedCache.Load().(*cachedOpenAICodexTicketFailClosed); ok && cached != nil {
+				return cached.value, nil
+			}
+			return false, nil
+		}
+		failClosed := strings.TrimSpace(value) == "true"
+		s.openAICodexTicketFailClosedCache.CompareAndSwap(snapshot, &cachedOpenAICodexTicketFailClosed{
+			value:     failClosed,
+			expiresAt: time.Now().Add(openAICodexTicketFailClosedCacheTTL).UnixNano(),
+		})
+		return failClosed, nil
+	})
+	select {
+	case <-ctx.Done():
+		return false
+	case result := <-resultCh:
+		if value, ok := result.Val.(bool); ok && result.Err == nil {
+			return value
+		}
+		return false
+	}
+}
+
+func (s *SettingService) InvalidateOpenAICodexTicketFailClosedCache() {
+	if s == nil {
+		return
+	}
+	s.openAICodexTicketFailClosedSF.Forget(SettingKeyOpenAICodexTicketFailClosed)
+	s.openAICodexTicketFailClosedCache.Store(&cachedOpenAICodexTicketFailClosed{expiresAt: 0})
+}
+
+type cachedOpenAICodexTicketModels struct {
+	models     []string
+	configured bool
+	expiresAt  int64
+}
+
+const openAICodexTicketModelsCacheTTL = 5 * time.Second
+
+// GetOpenAICodexTicketModels returns the model list saved by the admin panel.
+// A missing setting falls back to the static config; an explicitly saved empty
+// list remains empty so individual models can be disabled.
+func (s *SettingService) GetOpenAICodexTicketModels(ctx context.Context, fallback []string) []string {
+	if len(fallback) == 0 {
+		fallback = []string{openAICodexTicketDefaultModel, openAICodexTicketDefaultSolModel}
+	}
+	fallback = NormalizeOpenAICodexTicketModels(fallback)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if s == nil || s.settingRepo == nil || ctx.Err() != nil {
+		return fallback
+	}
+	if cached, ok := s.openAICodexTicketModelsCache.Load().(*cachedOpenAICodexTicketModels); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		if cached.configured {
+			return NormalizeOpenAICodexTicketModels(cached.models)
+		}
+		return fallback
+	}
+	resultCh := s.openAICodexTicketModelsSF.DoChan(SettingKeyOpenAICodexTicketModels, func() (any, error) {
+		snapshot := s.openAICodexTicketModelsCache.Load()
+		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAICodexTicketModels)
+		if errors.Is(err, ErrSettingNotFound) {
+			s.openAICodexTicketModelsCache.CompareAndSwap(snapshot, &cachedOpenAICodexTicketModels{expiresAt: time.Now().Add(openAICodexTicketModelsCacheTTL).UnixNano()})
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		var models []string
+		if err := json.Unmarshal([]byte(value), &models); err != nil {
+			return nil, err
+		}
+		models = NormalizeOpenAICodexTicketModels(models)
+		s.openAICodexTicketModelsCache.CompareAndSwap(snapshot, &cachedOpenAICodexTicketModels{models: models, configured: true, expiresAt: time.Now().Add(openAICodexTicketModelsCacheTTL).UnixNano()})
+		return models, nil
+	})
+	select {
+	case <-ctx.Done():
+		return fallback
+	case result := <-resultCh:
+		if result.Err == nil {
+			if models, ok := result.Val.([]string); ok {
+				return NormalizeOpenAICodexTicketModels(models)
+			}
+			return fallback
+		}
+		if cached, ok := s.openAICodexTicketModelsCache.Load().(*cachedOpenAICodexTicketModels); ok && cached != nil && cached.configured {
+			return NormalizeOpenAICodexTicketModels(cached.models)
+		}
+		return fallback
+	}
+}
+
+func (s *SettingService) InvalidateOpenAICodexTicketModelsCache() {
+	if s == nil {
+		return
+	}
+	s.openAICodexTicketModelsSF.Forget(SettingKeyOpenAICodexTicketModels)
+	s.openAICodexTicketModelsCache.Store(&cachedOpenAICodexTicketModels{expiresAt: 0})
 }
 
 type cachedOpenAICodexTicketHarvestProxy struct {
@@ -356,7 +492,8 @@ func (s *SettingService) GetOpenAICodexTicketHarvestProxyURL(ctx context.Context
 		}
 	}
 	resultCh := s.openAICodexTicketHarvestProxySF.DoChan(SettingKeyOpenAICodexTicketHarvestProxyURL, func() (any, error) {
-		if cached, ok := s.openAICodexTicketHarvestProxyCache.Load().(*cachedOpenAICodexTicketHarvestProxy); ok && cached != nil {
+		snapshot := s.openAICodexTicketHarvestProxyCache.Load()
+		if cached, ok := snapshot.(*cachedOpenAICodexTicketHarvestProxy); ok && cached != nil {
 			if time.Now().UnixNano() < cached.expiresAt {
 				return cached.value, nil
 			}
@@ -372,14 +509,14 @@ func (s *SettingService) GetOpenAICodexTicketHarvestProxyURL(ctx context.Context
 			if cached, ok := s.openAICodexTicketHarvestProxyCache.Load().(*cachedOpenAICodexTicketHarvestProxy); ok && cached != nil {
 				value = cached.value
 			}
-			s.openAICodexTicketHarvestProxyCache.Store(&cachedOpenAICodexTicketHarvestProxy{
+			s.openAICodexTicketHarvestProxyCache.CompareAndSwap(snapshot, &cachedOpenAICodexTicketHarvestProxy{
 				value:     value,
 				expiresAt: time.Now().Add(time.Second).UnixNano(),
 			})
 			return value, nil
 		}
 		value = strings.TrimSpace(value)
-		s.openAICodexTicketHarvestProxyCache.Store(&cachedOpenAICodexTicketHarvestProxy{
+		s.openAICodexTicketHarvestProxyCache.CompareAndSwap(snapshot, &cachedOpenAICodexTicketHarvestProxy{
 			value:     value,
 			expiresAt: time.Now().Add(openAICodexTicketHarvestProxyCacheTTL).UnixNano(),
 		})
@@ -402,6 +539,217 @@ func (s *SettingService) InvalidateOpenAICodexTicketHarvestProxyCache() {
 	}
 	s.openAICodexTicketHarvestProxySF.Forget(SettingKeyOpenAICodexTicketHarvestProxyURL)
 	s.openAICodexTicketHarvestProxyCache.Store(&cachedOpenAICodexTicketHarvestProxy{expiresAt: 0})
+}
+
+// GetOpenAICodexTicketProbeIntervalSeconds 返回后台设置的打票巡检周期，缺失时回退 fallback。
+func (s *SettingService) GetOpenAICodexTicketProbeIntervalSeconds(ctx context.Context, fallback int) int {
+	if s == nil || s.settingRepo == nil || ctx == nil || ctx.Err() != nil {
+		return fallback
+	}
+	return codexHarvestTunableInt(
+		s.loadCodexHarvestTunablesRaw(ctx),
+		SettingKeyOpenAICodexTicketProbeIntervalSeconds, fallback, 10, 1800,
+	)
+}
+
+// GetOpenAICodexTicketMaxProbesPerRound 返回后台设置的每轮打号并发上限，缺失时回退 fallback。
+func (s *SettingService) GetOpenAICodexTicketMaxProbesPerRound(ctx context.Context, fallback int) int {
+	if s == nil || s.settingRepo == nil || ctx == nil || ctx.Err() != nil {
+		return fallback
+	}
+	return codexHarvestTunableInt(
+		s.loadCodexHarvestTunablesRaw(ctx),
+		SettingKeyOpenAICodexTicketMaxProbesPerRound, fallback, 1, 50,
+	)
+}
+
+// GetOpenAICodexTicketCooldownSeconds 返回后台设置的失败惩罚冷却，缺失时回退 fallback。
+func (s *SettingService) GetOpenAICodexTicketCooldownSeconds(ctx context.Context, fallback int) int {
+	if s == nil || s.settingRepo == nil || ctx == nil || ctx.Err() != nil {
+		return fallback
+	}
+	return codexHarvestTunableInt(
+		s.loadCodexHarvestTunablesRaw(ctx),
+		SettingKeyOpenAICodexTicketCooldownSeconds, fallback, 5, 600,
+	)
+}
+
+// GetOpenAICodexTicketAttemptTimeoutSeconds 返回单次探针超时上限，缺失时回退 fallback。
+func (s *SettingService) GetOpenAICodexTicketAttemptTimeoutSeconds(ctx context.Context, fallback int) int {
+	if s == nil || s.settingRepo == nil || ctx == nil || ctx.Err() != nil {
+		return fallback
+	}
+	return codexHarvestTunableInt(
+		s.loadCodexHarvestTunablesRaw(ctx),
+		SettingKeyOpenAICodexTicketAttemptTimeoutSeconds, fallback, 5, 60,
+	)
+}
+
+// GetOpenAICodexTicketRefreshBeforeSeconds 返回提前补票阈值，缺失时回退 fallback。
+func (s *SettingService) GetOpenAICodexTicketRefreshBeforeSeconds(ctx context.Context, fallback int) int {
+	if s == nil || s.settingRepo == nil || ctx == nil || ctx.Err() != nil {
+		return fallback
+	}
+	return codexHarvestTunableInt(
+		s.loadCodexHarvestTunablesRaw(ctx),
+		SettingKeyOpenAICodexTicketRefreshBeforeSeconds, fallback, 60, 1800,
+	)
+}
+
+// ---------------------------------------------------------------------------
+// 打票 5 个可调参数：一次批量读取 + 5 秒缓存
+//
+// 这 5 个键原先各自 GetValue，单次快照构建要 5 次 DB 往返；而
+// GET /admin/accounts/codex-harvest-flow 是前端高频轮询接口（实测 90 分钟
+// 232 次、平均 6 秒）。改成一次 GetMultiple 并把【原始字符串】缓存 5 秒，
+// 所有 getter 共享同一份缓存 —— 无论多少调用方，5 秒内只打 1 次 DB。
+// ---------------------------------------------------------------------------
+
+var codexHarvestTunableKeys = []string{
+	SettingKeyOpenAICodexTicketProbeIntervalSeconds,
+	SettingKeyOpenAICodexTicketMaxProbesPerRound,
+	SettingKeyOpenAICodexTicketCooldownSeconds,
+	SettingKeyOpenAICodexTicketAttemptTimeoutSeconds,
+	SettingKeyOpenAICodexTicketRefreshBeforeSeconds,
+}
+
+type cachedCodexHarvestTunablesRaw struct {
+	raw       map[string]string
+	expiresAt int64
+}
+
+const codexHarvestTunablesCacheTTL = 5 * time.Second
+
+// loadCodexHarvestTunablesRaw 一次 GetMultiple 取回 5 个键的原始值并缓存 5 秒。
+// 命中缓存零 DB 查询；DB 报错时回退上一份缓存，不让读数失败影响打票。
+func (s *SettingService) loadCodexHarvestTunablesRaw(ctx context.Context) map[string]string {
+	if s == nil || s.settingRepo == nil {
+		return nil
+	}
+	cachedRaw := func() map[string]string {
+		if cached, ok := s.codexHarvestTunablesCache.Load().(*cachedCodexHarvestTunablesRaw); ok && cached != nil {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached.raw
+			}
+		}
+		return nil
+	}
+	if raw := cachedRaw(); raw != nil {
+		return raw
+	}
+	resultCh := s.codexHarvestTunablesSF.DoChan("codex_harvest_tunables", func() (any, error) {
+		if raw := cachedRaw(); raw != nil {
+			return raw, nil
+		}
+		dbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		// 批量读只是性能优化，不能因为某个 repo 实现不支持它就让整条请求失败，
+		// 所以这里带 panic 兜底 + 逐键降级。
+		values, ok := s.getMultipleSafe(dbCtx, codexHarvestTunableKeys)
+		if !ok {
+			values = s.getCodexHarvestTunablesOneByOne(dbCtx)
+		}
+		if values == nil {
+			if cached, ok := s.codexHarvestTunablesCache.Load().(*cachedCodexHarvestTunablesRaw); ok && cached != nil && cached.raw != nil {
+				return cached.raw, nil
+			}
+			values = map[string]string{}
+		}
+		s.codexHarvestTunablesCache.Store(&cachedCodexHarvestTunablesRaw{
+			raw:       values,
+			expiresAt: time.Now().Add(codexHarvestTunablesCacheTTL).UnixNano(),
+		})
+		return values, nil
+	})
+	select {
+	case <-ctx.Done():
+		if raw := cachedRaw(); raw != nil {
+			return raw
+		}
+		return nil
+	case result := <-resultCh:
+		if v, ok := result.Val.(map[string]string); ok && result.Err == nil {
+			return v
+		}
+	}
+	return nil
+}
+
+// getMultipleSafe 调用 GetMultiple 并对 panic 做兜底。
+//
+// SettingRepository 有多套实现，部分实现（含测试桩）不支持批量读、直接 panic。
+// 批量读是优化手段而非功能前提，因此这里把 panic 收敛成"不支持"，由调用方降级，
+// 避免一个可选优化把整条请求打挂。返回 ok=false 表示"不支持或出错"。
+func (s *SettingService) getMultipleSafe(ctx context.Context, keys []string) (values map[string]string, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			values, ok = nil, false
+		}
+	}()
+	result, err := s.settingRepo.GetMultiple(ctx, keys)
+	if err != nil {
+		return nil, false
+	}
+	return result, true
+}
+
+// getCodexHarvestTunablesOneByOne 逐键读取的降级实现，仅在批量读不可用时走。
+func (s *SettingService) getCodexHarvestTunablesOneByOne(ctx context.Context) map[string]string {
+	values := make(map[string]string, len(codexHarvestTunableKeys))
+	for _, key := range codexHarvestTunableKeys {
+		value, err := s.settingRepo.GetValue(ctx, key)
+		if err != nil {
+			continue
+		}
+		values[key] = value
+	}
+	return values
+}
+
+// codexHarvestTunableInt 从批量结果取一个整数并做范围校验，越界或缺失回退 fallback。
+func codexHarvestTunableInt(raw map[string]string, key string, fallback, minValue, maxValue int) int {
+	if raw == nil {
+		return fallback
+	}
+	value, ok := raw[key]
+	if !ok {
+		return fallback
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < minValue || n > maxValue {
+		return fallback
+	}
+	return n
+}
+
+// SetRawKeys 批量写入设置，一次 SetMultiple 替代 N 次串行 Set，减少 DB 往返。
+func (s *SettingService) SetRawKeys(ctx context.Context, values map[string]string) error {
+	if s == nil || s.settingRepo == nil {
+		return errors.New("setting repository unavailable")
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	return s.settingRepo.SetMultiple(ctx, values)
+}
+
+// InvalidateCodexHarvestCaches resets cached ticket settings.
+func (s *SettingService) InvalidateCodexHarvestCaches() {
+	if s == nil {
+		return
+	}
+	s.openAICodexTicketEnabledSF.Forget(SettingKeyOpenAICodexTicketEnabled)
+	s.openAICodexTicketEnabledCache.Store(&cachedOpenAICodexTicketEnabled{expiresAt: 0})
+	s.openAICodexTicketFailClosedSF.Forget(SettingKeyOpenAICodexTicketFailClosed)
+	s.openAICodexTicketFailClosedCache.Store(&cachedOpenAICodexTicketFailClosed{expiresAt: 0})
+	s.openAICodexTicketModelsSF.Forget(SettingKeyOpenAICodexTicketModels)
+	s.openAICodexTicketModelsCache.Store(&cachedOpenAICodexTicketModels{expiresAt: 0})
+	s.codexHarvestTunablesSF.Forget("codex_harvest_tunables")
+	s.codexHarvestTunablesCache.Store(&cachedCodexHarvestTunablesRaw{expiresAt: 0})
 }
 
 // GetOpenAICodexUserAgent 返回 OpenAI Codex 上游请求使用的 User-Agent。

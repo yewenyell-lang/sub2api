@@ -66,7 +66,13 @@ type AccountHandler struct {
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
 	codexTicketSettings     *service.SettingService
+	openAIGatewayService    *service.OpenAIGatewayService
 	cfg                     *config.Config
+}
+
+// SetOpenAIGatewayService attaches the gateway service for manual harvest actions.
+func (h *AccountHandler) SetOpenAIGatewayService(gw *service.OpenAIGatewayService) {
+	h.openAIGatewayService = gw
 }
 
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
@@ -367,6 +373,8 @@ func (h *AccountHandler) enrichCodexTicketStatus(account *service.Account, out *
 		cfg := h.cfg.Gateway.OpenAICodexTicket
 		if h.codexTicketSettings != nil {
 			cfg.Enabled = h.codexTicketSettings.GetOpenAICodexTicketEnabled(context.Background(), cfg.Enabled)
+			cfg.Models = h.codexTicketSettings.GetOpenAICodexTicketModels(context.Background(), cfg.Models)
+			cfg.FailClosed = h.codexTicketSettings.GetOpenAICodexTicketFailClosed(context.Background())
 		}
 		out.CodexTurnTickets = service.OpenAICodexTicketStatuses(account, cfg, time.Now())
 	}

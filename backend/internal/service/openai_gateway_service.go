@@ -443,6 +443,7 @@ var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /r
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
 	accountRepo           AccountRepository
+	proxyRepo             ProxyRepository
 	usageLogRepo          UsageLogRepository
 	usageBillingRepo      UsageBillingRepository
 	userRepo              UserRepository
@@ -509,17 +510,21 @@ type OpenAIGatewayService struct {
 	openaiCodexTurnStateOrigins sync.Map
 	openaiCodexTurnStateWrites  atomic.Uint64
 	// openaiCodexTickets: accountID\x00model → *openAICodexTicket，292 长度门票。
-	openaiCodexTickets           sync.Map
-	openaiCodexTicketFlight      singleflight.Group
-	openaiCodexTicketLifecycleMu sync.Mutex
-	openaiCodexTicketCancel      context.CancelFunc
-	openaiCodexTicketDone        chan struct{}
-	openaiCodexTicketStopped     bool
+	openaiCodexTickets             sync.Map
+	openaiCodexTicketStateMu       sync.Mutex
+	openaiCodexTicketCursors       sync.Map // codexHarvestTier -> *atomic.Uint64
+	openaiCodexTicketFlight        singleflight.Group
+	openaiCodexTicketProbeCooldown sync.Map // accountID\x00model -> time.Time
+	openaiCodexTicketLifecycleMu   sync.Mutex
+	openaiCodexTicketCancel        context.CancelFunc
+	openaiCodexTicketDone          chan struct{}
+	openaiCodexTicketStopped       bool
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
 func NewOpenAIGatewayService(
 	accountRepo AccountRepository,
+	proxyRepo ProxyRepository,
 	usageLogRepo UsageLogRepository,
 	usageBillingRepo UsageBillingRepository,
 	userRepo UserRepository,
@@ -549,6 +554,7 @@ func NewOpenAIGatewayService(
 	}
 	svc := &OpenAIGatewayService{
 		accountRepo:         accountRepo,
+		proxyRepo:           proxyRepo,
 		usageLogRepo:        usageLogRepo,
 		usageBillingRepo:    usageBillingRepo,
 		userRepo:            userRepo,
