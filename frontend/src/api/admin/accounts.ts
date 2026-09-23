@@ -32,7 +32,9 @@ import type {
   OllamaCloudUsageSettings,
   OllamaCloudUsageState,
   GrokMediaEligibilityMode,
-  GrokMediaEligibilityState
+  GrokMediaEligibilityState,
+  OpenCodeGoUsageSettings,
+  OpenCodeGoUsageState,
 } from '@/types'
 
 /**
@@ -1316,6 +1318,38 @@ export async function streamManualCodexHarvest(
   }
 }
 
+export async function getOpenCodeGoUsageSettings(): Promise<OpenCodeGoUsageSettings> {
+  const { data } = await apiClient.get<OpenCodeGoUsageSettings>('/admin/accounts/opencode-go-usage/settings')
+  return data
+}
+
+export async function updateOpenCodeGoUsageSettings(
+  settings: OpenCodeGoUsageSettings
+): Promise<OpenCodeGoUsageSettings> {
+  const { data } = await apiClient.put<OpenCodeGoUsageSettings>(
+    '/admin/accounts/opencode-go-usage/settings',
+    settings
+  )
+  return data
+}
+
+export async function getOpenCodeGoUsage(id: number): Promise<OpenCodeGoUsageState> {
+  const { data } = await apiClient.get<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage`)
+  return data
+}
+
+export async function setOpenCodeGoUsageAutoRefresh(id: number, enabled: boolean): Promise<OpenCodeGoUsageState> {
+  const { data } = await apiClient.put<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage/auto-refresh`, {
+    enabled
+  })
+  return data
+}
+
+export async function refreshOpenCodeGoUsage(id: number): Promise<OpenCodeGoUsageState> {
+  const { data } = await apiClient.post<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage/refresh`)
+  return data
+}
+
 export const accountsAPI = {
   list,
   listWithEtag,
@@ -1382,7 +1416,12 @@ export const accountsAPI = {
   refreshOllamaCloudUsage,
   getCodexHarvestFlow,
   updateCodexSkipHarvest,
-  streamManualCodexHarvest
+  streamManualCodexHarvest,
+  getOpenCodeGoUsageSettings,
+  updateOpenCodeGoUsageSettings,
+  getOpenCodeGoUsage,
+  setOpenCodeGoUsageAutoRefresh,
+  refreshOpenCodeGoUsage
 }
 
 export default accountsAPI
