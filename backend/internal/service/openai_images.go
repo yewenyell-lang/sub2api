@@ -467,7 +467,9 @@ func applyOpenAIImagesDefaults(req *OpenAIImagesRequest) {
 }
 
 func isOpenAIImageGenerationModel(model string) bool {
-	return IsGPTImageGenerationModel(model) || isGrokImageGenerationModel(model)
+	return IsGPTImageGenerationModel(model) ||
+		isGrokImageGenerationModel(model) ||
+		isGeminiImageGenerationModel(model)
 }
 
 // IsGPTImageGenerationModel identifies the GPT native image-generation model family.
@@ -481,6 +483,12 @@ func isGrokImageGenerationModel(model string) bool {
 	return model == "grok-imagine" ||
 		model == "grok-imagine-edit" ||
 		strings.HasPrefix(model, "grok-imagine-image")
+}
+
+func isGeminiImageGenerationModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return (strings.HasPrefix(model, "gemini-") && strings.Contains(model, "image")) ||
+		strings.HasPrefix(model, "banana")
 }
 
 func validateOpenAIImagesModel(model string) error {
