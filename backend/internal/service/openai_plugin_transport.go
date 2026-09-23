@@ -9,7 +9,23 @@ func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 // doOpenAIUpstream 只在 OpenAI OAuth 能力绑定已启用时把真实请求交给插件。
 // 插件返回标准 http.Response，响应解析、错误映射、SSE 和计费仍由现有核心链处理。
 func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (result *http.Response, resultErr error) {
+	request = s.stickBoundCodexTicketRequest(request, account)
 	boundTicket := s.codexTicketRequestBound(request, account)
+	releaseChat := func() {}
+	if boundTicket {
+		releaseChat = s.holdCodexTicketChat(account)
+	}
+	proxyURL, release, err := s.pinCodexTicketEgress(request, account, proxyURL)
+	if err != nil {
+		releaseChat()
+		return nil, err
+	}
+	defer func() {
+		result, resultErr = attachCodexTicketEgressRelease(result, resultErr, func() {
+			release()
+			releaseChat()
+		})
+	}()
 	defer func() {
 		if resultErr == nil {
 			s.observeCodexTicketResponse(request, result, account)

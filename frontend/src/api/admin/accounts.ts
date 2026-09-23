@@ -3,7 +3,10 @@
  * Handles AI platform account management for administrators
  */
 
-import { apiClient } from '../client'
+import { apiClient, buildApiUrl } from '../client'
+import { ADMIN_UI_REQUEST_HEADER } from '../adminUIRequest'
+import type { CodexHarvestRuntime } from './codexHarvest'
+export { getCodexHarvestControls, saveCodexHarvestControls, getCodexHarvestNodes, resetCodexHarvestNodes } from './codexHarvest'
 import type { OpenAIReferralRefreshResult, OpenAIReferralSendResult } from '@/types/openaiReferrals'
 import type {
   Account,
@@ -1105,6 +1108,9 @@ export interface CodexHarvestFlowTicket {
   blocked: boolean
   expires_at?: string
   standby_expires_at?: string
+  standby?: boolean
+  cookie_count?: number
+  cookie_expires_at?: string
   probe?: {
     result?: string
     http_status?: number
@@ -1120,16 +1126,11 @@ export interface CodexHarvestFlowAccount {
   schedulable: boolean
   skip_harvest?: boolean
   in_scope?: boolean
+  availability?: string
+  recover_at?: string
   tickets: CodexHarvestFlowTicket[]
   ready_count: number
   blocked_count: number
-  /** 当前可用性（后端按调度 SQL 口径计算）：available / rate_limited / overload /
-   *  temp_unschedulable / error / disabled / expired。老版本后端不返回该字段。 */
-  availability?: string
-  /** 被时间窗挡住时的预计恢复时间（ISO 字符串）。 */
-  recover_at?: string
-  /** 临时不可调度的原因原文（排查用）。 */
-  temp_unschedulable_reason?: string
 }
 
 export interface CodexHarvestFlowStage {
@@ -1138,7 +1139,6 @@ export interface CodexHarvestFlowStage {
   detail?: string
   at?: string
   node?: string
-  node_name?: string
   model?: string
   http_status?: number
   length?: number
@@ -1156,7 +1156,6 @@ export interface CodexHarvestFlowEvent {
   account_name?: string
   model?: string
   node?: string
-  node_name?: string
   http_status?: number
   length?: number
   blocks?: number
@@ -1176,15 +1175,15 @@ export interface CodexHarvestFlowSnapshot {
     fail_closed: boolean
     strategy: string
     scope_mode?: string
+    scope_error?: boolean
     account_policy?: string
     group_ids?: number[]
     models: string[]
     target_length: number
     probe_interval_seconds: number
     cooldown_seconds: number
-    attempt_timeout_seconds?: number
-    refresh_before_seconds?: number
     max_probes_per_round: number
+    refresh_before_seconds?: number
     harvest_proxy?: string
   }
   sidecar: {
@@ -1195,7 +1194,6 @@ export interface CodexHarvestFlowSnapshot {
     group?: string
     type?: string
     now?: string
-    now_name?: string
     all_count?: number
     error?: string
     observed_at?: string
@@ -1214,6 +1212,7 @@ export interface CodexHarvestFlowSnapshot {
     tickets_blocked: number
   }
   events: CodexHarvestFlowEvent[]
+  runtime?: CodexHarvestRuntime
 }
 
 export async function getCodexHarvestFlow(): Promise<CodexHarvestFlowSnapshot> {
@@ -1228,29 +1227,93 @@ export async function updateCodexSkipHarvest(id: number, skipHarvest: boolean): 
   return data
 }
 
-export interface CodexHarvestConfigPayload {
-  probe_interval_seconds: number
-  max_probes_per_round: number
-  cooldown_seconds: number
-  attempt_timeout_seconds: number
-  refresh_before_seconds: number
-}
-
-export async function updateCodexHarvestConfig(payload: CodexHarvestConfigPayload): Promise<{ message: string }> {
-  // admin 面整体偏慢（实测 3~25s），默认 30s 超时会把已经落库的请求误判为失败，
-  // 这里单独放宽到 60s。
-  const { data } = await apiClient.put<{ message: string }>('/admin/accounts/codex-harvest-flow/config', payload, {
-    timeout: 60000,
-  })
-  return data
-}
-
-export interface ManualHarvestRequestPayload {
-  models: string[]
+export interface ManualHarvestRequest {
+  collect_lanes?: number
+  models?: string[]
   probe_interval_seconds: number
   rate_limit_cooldown_seconds: number
   max_attempts: number
+  node_switch_rule: string
   stop_on_success: boolean
+}
+
+export interface ManualHarvestProgress {
+  attempt?: number
+  max_attempts?: number
+  model?: string
+  node?: string
+  http_status?: number
+  length?: number
+  blocks?: number
+  expected_length?: number
+  expected_blocks?: number
+  result?: string
+  level?: string
+  message?: string
+  detail?: string
+  tickets_stored?: number
+  done?: boolean
+}
+
+export async function streamManualCodexHarvest(
+  accountId: number,
+  body: ManualHarvestRequest,
+  onProgress: (progress: ManualHarvestProgress) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+    [ADMIN_UI_REQUEST_HEADER]: '1'
+  }
+  const token = localStorage.getItem('auth_token')
+  if (token) headers.Authorization = `Bearer ${token}`
+  const res = await fetch(buildApiUrl(`/admin/accounts/${accountId}/manual-harvest`), {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify(body),
+    signal
+  })
+  if (res.status === 401) {
+    const error = new Error('HTTP 401') as Error & { status: number }
+    error.status = 401
+    throw error
+  }
+  if (!res.ok || !res.body) {
+    let detail = ''
+    try {
+      detail = (await res.text()).slice(0, 200)
+    } catch {
+      detail = ''
+    }
+    throw new Error(detail ? `HTTP ${res.status} - ${detail}` : `HTTP ${res.status}`)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const frames = buffer.split('\n\n')
+    buffer = frames.pop() || ''
+    for (const frame of frames) {
+      if (!frame.startsWith('data: ')) continue
+      try {
+        onProgress(JSON.parse(frame.slice(6)) as ManualHarvestProgress)
+      } catch {
+        // ignore a malformed SSE frame
+      }
+    }
+  }
+  if (buffer.startsWith('data: ')) {
+    try {
+      onProgress(JSON.parse(buffer.slice(6)) as ManualHarvestProgress)
+    } catch {
+      // ignore a trailing malformed SSE frame
+    }
+  }
 }
 
 export const accountsAPI = {
@@ -1319,7 +1382,7 @@ export const accountsAPI = {
   refreshOllamaCloudUsage,
   getCodexHarvestFlow,
   updateCodexSkipHarvest,
-  updateCodexHarvestConfig,
+  streamManualCodexHarvest
 }
 
 export default accountsAPI

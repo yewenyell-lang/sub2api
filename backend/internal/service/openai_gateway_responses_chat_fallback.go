@@ -136,6 +136,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	if err != nil {
 		return nil, err
 	}
+	if _, err := s.admitOpenAITurn(ctx, c, account, upstreamModel); err != nil {
+		return nil, err
+	}
 	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "")
 	if err != nil {
 		return nil, err
@@ -539,16 +542,6 @@ func isDeepSeekSemanticsChatUpstream(account *Account, upstreamModel string) boo
 // 单个空格。
 const deepSeekChatReasoningPlaceholderText = " "
 
-// targetsDeepSeekAPIHost 报告该账号实际上游是否按 DeepSeek 语义工作。
-// 官方 DeepSeek（platform=deepseek 或 base_url 指向 api.deepseek.com）与把
-// deepseek-* 模型挂在聚合站上的账号都算命中——后者实测同样要求 thinking-mode
-// 历史回传 reasoning_content（否则 400）。
-//
-// 该 helper 只拿到账号与 messages、没有请求模型名，因此按账号级映射判定。
-func targetsDeepSeekAPIHost(account *Account) bool {
-	return isDeepSeekSemanticsAccount(account)
-}
-
 // ensureDeepSeekChatReasoningPlaceholders 给缺 reasoning_content 的 assistant
 // 消息补单个空格占位。DeepSeek thinking mode 要求历史里每条产生过思维的
 // assistant 消息都回传该字段，否则 400
@@ -557,7 +550,7 @@ func targetsDeepSeekAPIHost(account *Account) bool {
 // 桥接会从 summary / 缓存回注真实明文；这里只填仍为空的缺口，不覆盖已有内容。
 // 非 DeepSeek 上游原样返回（字节不变）。
 func ensureDeepSeekChatReasoningPlaceholders(account *Account, body []byte) []byte {
-	if !targetsDeepSeekAPIHost(account) {
+	if !isDeepSeekSemanticsChatUpstream(account, gjson.GetBytes(body, "model").String()) {
 		return body
 	}
 	messages := gjson.GetBytes(body, "messages")

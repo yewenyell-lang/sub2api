@@ -106,6 +106,9 @@ func classifyUpstreamTransportError(err error) upstreamTransportErrorClass {
 //
 // passthrough tags the Ops error event for the OpenAI passthrough forward path.
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error, passthrough bool) error {
+	if IsOpenAITurnAdmissionError(err) {
+		return err
+	}
 	if errors.Is(err, ErrCodexTicketResponseRejected) {
 		if c != nil && !c.Writer.Written() {
 			c.AbortWithStatusJSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "ticket_response_rejected", "message": err.Error()}})

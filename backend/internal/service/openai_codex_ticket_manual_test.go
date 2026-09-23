@@ -77,7 +77,13 @@ func TestManualHarvestPersistenceOutcome(t *testing.T) {
 					require.False(t, event.Done)
 				}
 				if scenario == "failure" {
-					require.Equal(t, "persist_failed", events[0].Result)
+					found := false
+					for _, event := range events {
+						if event.Result == "persist_failed" {
+							found = true
+						}
+					}
+					require.True(t, found)
 				}
 			}
 		})

@@ -33,7 +33,9 @@ func harvestScopeAccount(id int64, schedulable bool, groups ...int64) Account {
 
 func harvestScopeService(t *testing.T, raw string, accounts []Account, budget int) (*OpenAIGatewayService, *harvestScopeUpstream, *codexTicketSettingRepo) {
 	t.Helper()
-	repo := &codexTicketSettingRepo{codexPolicyMigrationRepoStub: &codexPolicyMigrationRepoStub{values: map[string]string{}}}
+	repo := &codexTicketSettingRepo{codexPolicyMigrationRepoStub: &codexPolicyMigrationRepoStub{values: map[string]string{
+		SettingKeyOpenAICodexTicketEnabled: "true",
+	}}}
 	if raw != "" {
 		repo.values[SettingKeyOpenAICodexTicketHarvestScope] = raw
 	}
@@ -146,9 +148,9 @@ func TestCodexHarvestPrioritySkipsFreshTicketsAndHonorsChangedScheduling(t *test
 	first := harvestScopeAccount(1, true, 2)
 	second := harvestScopeAccount(2, false, 2)
 	s, u, _ := harvestScopeService(t, "", []Account{first, second}, 1)
-	s.storeOpenAICodexTicket(context.Background(), &first, &openAICodexTicket{
+	require.NoError(t, s.storeOpenAICodexTicket(context.Background(), &first, &openAICodexTicket{
 		Model: "gpt-6-astra", State: fakeCodexTicketState(292), Length: 292, ExpiresAt: time.Now().Add(time.Hour),
-	})
+	}))
 	s.refreshOpenAICodexTickets(context.Background())
 	require.Empty(t, u.ids)
 	// A formerly deferred account takes priority as soon as its switch changes.

@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,55 +17,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/mihomo"
 	"github.com/stretchr/testify/require"
 )
-
-func TestHarvestFlowResolvesSubscriptionNameWithoutChangingEventID(t *testing.T) {
-	resetCodexHarvestFlow()
-	t.Cleanup(resetCodexHarvestFlow)
-	dir := t.TempDir()
-	t.Setenv("DATA_DIR", dir)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"node_names":{"node-test":"日本 东京 01"}}`), 0600))
-	m := mihomo.New(dir)
-	t.Cleanup(m.Close)
-	recordCodexHarvestNode("node-test", "LoadBalance", 1)
-	snapshot := BuildCodexHarvestFlow(context.Background(), &config.Config{Gateway: config.GatewayConfig{OpenAICodexTicket: config.OpenAICodexTicketConfig{HarvestProxyURL: mihomo.Endpoint}}}, nil, nil)
-	require.Equal(t, "node-test", snapshot.Events[0].Node)
-	require.Equal(t, "日本 东京 01", snapshot.Events[0].NodeName)
-	require.Equal(t, "node-test", snapshot.Stages[0].Node)
-	require.Equal(t, "日本 东京 01", snapshot.Stages[0].NodeName)
-}
-
-func TestExternalHarvestProxyDoesNotQueryOrInheritSidecar(t *testing.T) {
-	resetCodexHarvestFlow()
-	t.Cleanup(resetCodexHarvestFlow)
-	var queries atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		queries.Add(1)
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
-	sidecarControllerCache.Store(&cachedSidecarController{until: time.Now().Add(time.Hour), controller: server.URL})
-	t.Cleanup(func() { sidecarControllerCache.Store(nil) })
-	recordCodexHarvestNode("previous-mihomo-node", "LoadBalance", 1)
-	for _, proxy := range []string{"http://user:password@residential.example:8080", ""} {
-		snapshot := BuildCodexHarvestFlow(context.Background(), &config.Config{Gateway: config.GatewayConfig{OpenAICodexTicket: config.OpenAICodexTicketConfig{HarvestProxyURL: proxy}}}, nil, nil)
-		require.Empty(t, snapshot.Sidecar.Error)
-		require.Empty(t, snapshot.Sidecar.Now)
-		require.Empty(t, snapshot.Stages[0].Node)
-		require.NotEqual(t, "fail", snapshot.Stages[0].Status)
-		require.False(t, snapshot.Sidecar.Reachable, "configuration is not a health probe")
-		require.Empty(t, watchCodexHarvestExit(proxy)())
-		if proxy == "" {
-			require.Equal(t, "unconfigured", snapshot.Sidecar.Mode)
-		} else {
-			require.Equal(t, "external", snapshot.Sidecar.Mode)
-		}
-	}
-	require.Zero(t, queries.Load())
-	local := observeCodexHarvestProxy(context.Background(), mihomo.Endpoint)
-	require.Equal(t, "mihomo", local.Mode)
-	require.NotEmpty(t, local.Error, "a selected but failing local sidecar still reports its error")
-	require.Positive(t, queries.Load())
-}
 
 func TestCodexHarvestFlowRecordsProbeTicketAndSelect(t *testing.T) {
 	resetCodexHarvestFlow()
@@ -125,10 +79,11 @@ func TestBuildCodexHarvestFlowSnapshotAndStages(t *testing.T) {
 	require.Equal(t, 1, snapshot.Accounts[0].ReadyCount)
 	require.False(t, snapshot.Accounts[0].SkipHarvest)
 	require.True(t, snapshot.Accounts[0].InScope)
+	require.Equal(t, CodexAccountAvailabilityAvailable, snapshot.Accounts[0].Availability)
 	require.Equal(t, 1, snapshot.Counts.TicketsReady)
 	require.Equal(t, 1, snapshot.Counts.ProbeHit)
 	require.Equal(t, 1, snapshot.Counts.TicketAccept)
-	require.Equal(t, 1, snapshot.Counts.SelectOK)
+	require.Zero(t, snapshot.Counts.SelectOK)
 	require.Len(t, snapshot.Stages, 5)
 	require.Equal(t, "probe", snapshot.Stages[1].ID)
 	require.Equal(t, "ok", snapshot.Stages[1].Status)
@@ -141,7 +96,7 @@ func TestBuildCodexHarvestFlowSnapshotAndStages(t *testing.T) {
 	for _, event := range snapshot.Events {
 		kinds = append(kinds, event.Kind)
 	}
-	require.Contains(t, kinds, "selected")
+	require.NotContains(t, kinds, "selected")
 }
 
 func TestBuildCodexHarvestFlowSkipHarvestAccount(t *testing.T) {
@@ -175,6 +130,10 @@ func TestBuildCodexHarvestFlowSkipHarvestAccount(t *testing.T) {
 	require.True(t, snapshot.Accounts[0].SkipHarvest)
 	require.False(t, snapshot.Accounts[0].InScope)
 	require.Equal(t, 1, snapshot.Accounts[0].ReadyCount)
+	require.Equal(t, 0, snapshot.Accounts[0].BlockedCount)
+	require.False(t, snapshot.Accounts[0].Tickets[0].Blocked)
+	require.False(t, snapshot.Accounts[0].Tickets[1].Ready)
+	require.False(t, snapshot.Accounts[0].Tickets[1].Blocked)
 }
 
 func TestClipFlowTextKeepsRunes(t *testing.T) {
@@ -211,7 +170,24 @@ func TestBuildCodexHarvestFlowAppliesRuntimeEnabled(t *testing.T) {
 	require.True(t, disabled.Harvest.FailClosed)
 	require.False(t, disabled.Harvest.Enabled)
 	require.Len(t, disabled.Accounts, 1)
+	require.NotNil(t, disabled.Accounts[0].Tickets)
 	require.Empty(t, disabled.Accounts[0].Tickets)
+	raw, err := json.Marshal(disabled)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"tickets":[]`)
+	require.NotContains(t, string(raw), `"tickets":null`)
+
+	none := BuildCodexHarvestFlow(context.Background(), &config.Config{
+		Gateway: config.GatewayConfig{OpenAICodexTicket: config.OpenAICodexTicketConfig{
+			Enabled: true, FailClosed: true, TargetLength: 292, Models: []string{"gpt-6-astra"},
+		}},
+	}, nil, nil)
+	require.NotNil(t, none.Accounts)
+	require.Empty(t, none.Accounts)
+	emptyRaw, err := json.Marshal(none)
+	require.NoError(t, err)
+	require.Contains(t, string(emptyRaw), `"accounts":[]`)
+	require.NotContains(t, string(emptyRaw), `"accounts":null`)
 
 	enabled := BuildCodexHarvestFlow(context.Background(), &config.Config{
 		Gateway: config.GatewayConfig{OpenAICodexTicket: config.OpenAICodexTicketConfig{
@@ -313,4 +289,130 @@ func TestCodexHarvestFlowReadsManagedAndLegacyConfig(t *testing.T) {
 			require.Empty(t, got.err)
 		})
 	}
+}
+
+func TestBuildCodexHarvestFlowAvailabilityWindows(t *testing.T) {
+	resetCodexHarvestFlow()
+	t.Cleanup(resetCodexHarvestFlow)
+	account := ticketTestAccount(2)
+	until := time.Now().Add(2 * time.Hour)
+	account.RateLimitResetAt = &until
+	snapshot := BuildCodexHarvestFlow(context.Background(), &config.Config{
+		Gateway: config.GatewayConfig{OpenAICodexTicket: config.OpenAICodexTicketConfig{
+			Enabled: true, Models: []string{"gpt-6-astra"},
+		}},
+	}, nil, []Account{*account})
+	require.Equal(t, CodexAccountAvailabilityRateLimited, snapshot.Accounts[0].Availability)
+	require.NotNil(t, snapshot.Accounts[0].RecoverAt)
+}
+
+func TestRecordCodexHarvestProbeHumanizesMiss(t *testing.T) {
+	resetCodexHarvestFlow()
+	t.Cleanup(resetCodexHarvestFlow)
+	account := ticketTestAccount(2)
+	recordCodexHarvestProbe(account, "gpt-6-astra", "invalid_state", "node-a", "", 200, 312, 11, 292, 10)
+	events := listCodexHarvestFlowEvents()
+	require.NotEmpty(t, events)
+	require.Contains(t, events[len(events)-1].Detail, "降智")
+}
+
+type memoryHarvestFlowStore struct {
+	mu     sync.Mutex
+	events []CodexHarvestFlowEvent
+	fail   error
+}
+
+func (s *memoryHarvestFlowStore) List(_ context.Context, limit int) ([]CodexHarvestFlowEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fail != nil {
+		return nil, s.fail
+	}
+	if limit < 1 || limit > len(s.events) {
+		limit = len(s.events)
+	}
+	out := make([]CodexHarvestFlowEvent, limit)
+	copy(out, s.events[len(s.events)-limit:])
+	return out, nil
+}
+
+func (s *memoryHarvestFlowStore) Append(_ context.Context, event CodexHarvestFlowEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fail != nil {
+		return s.fail
+	}
+	s.events = append(s.events, event)
+	if overflow := len(s.events) - 200; overflow > 0 {
+		s.events = append([]CodexHarvestFlowEvent(nil), s.events[overflow:]...)
+	}
+	return nil
+}
+
+func TestHarvestFlowPersistsAcrossRestart(t *testing.T) {
+	resetCodexHarvestFlow()
+	store := &memoryHarvestFlowStore{}
+	bindCodexHarvestFlowStore(store)
+	t.Cleanup(func() {
+		bindCodexHarvestFlowStore(nil)
+		resetCodexHarvestFlow()
+	})
+	account := ticketTestAccount(2)
+	account.Name = "20x"
+	recordCodexHarvestProbe(account, "gpt-6-astra", "success", "japan-08", "", 200, 292, 10, 292, 10)
+	require.Len(t, store.events, 1)
+	resetCodexHarvestFlow()
+	require.Empty(t, listCodexHarvestFlowEvents())
+	bindCodexHarvestFlowStore(store)
+	events := listCodexHarvestFlowEvents()
+	require.Len(t, events, 1)
+	require.Equal(t, "probe_hit", events[0].Kind)
+	require.Equal(t, "japan-08", events[0].Node)
+}
+
+func TestHarvestFlowPersistFailureKeepsMemory(t *testing.T) {
+	resetCodexHarvestFlow()
+	store := &memoryHarvestFlowStore{fail: errors.New("db down")}
+	bindCodexHarvestFlowStore(store)
+	t.Cleanup(func() {
+		bindCodexHarvestFlowStore(nil)
+		resetCodexHarvestFlow()
+	})
+	recordCodexHarvestSelect(nil, "gpt-6-astra", "failed", "unavailable", "no available OpenAI accounts")
+	events := listCodexHarvestFlowEvents()
+	require.Len(t, events, 1)
+	require.Empty(t, store.events)
+}
+
+func TestExternalHarvestProxyDoesNotQueryOrInheritSidecar(t *testing.T) {
+	resetCodexHarvestFlow()
+	t.Cleanup(resetCodexHarvestFlow)
+	var queries atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		queries.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	sidecarControllerCache.Store(&cachedSidecarController{until: time.Now().Add(time.Hour), controller: server.URL})
+	t.Cleanup(func() { sidecarControllerCache.Store(nil) })
+	recordCodexHarvestNode("previous-mihomo-node", "LoadBalance", 1)
+	for _, proxy := range []string{"http://user:password@residential.example:8080", ""} {
+		snapshot := BuildCodexHarvestFlow(context.Background(), &config.Config{Gateway: config.GatewayConfig{OpenAICodexTicket: config.OpenAICodexTicketConfig{HarvestProxyURL: proxy}}}, nil, nil)
+		require.Empty(t, snapshot.Sidecar.Error)
+		require.Empty(t, snapshot.Sidecar.Now)
+		require.Empty(t, snapshot.Stages[0].Node)
+		require.NotEqual(t, "fail", snapshot.Stages[0].Status)
+		require.False(t, snapshot.Sidecar.Reachable, "configuration is not a health probe")
+		require.Empty(t, watchCodexHarvestExit(proxy)())
+		if proxy == "" {
+			require.Equal(t, "unconfigured", snapshot.Sidecar.Mode)
+		} else {
+			require.Equal(t, "external", snapshot.Sidecar.Mode)
+		}
+	}
+	require.Zero(t, queries.Load())
+	local := observeCodexHarvestProxy(context.Background(), mihomo.Endpoint)
+	require.Equal(t, "mihomo", local.Mode)
+	require.NotEmpty(t, local.Error, "a selected but failing local sidecar still reports its error")
+	require.Positive(t, queries.Load())
 }

@@ -3891,7 +3891,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_YieldsStickyToHigherPri
 	}
 }
 
-func TestOpenAIGatewayService_SelectAccountWithScheduler_SkipHarvestDoesNotSpendLeftoverTicket(t *testing.T) {
+func TestOpenAIGatewayService_SelectAccountWithScheduler_SkipHarvestRemainsSchedulable(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(3)
 	skipped := Account{
@@ -3968,7 +3968,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SkipHarvestDoesNotSpend
 	}
 
 	svc.accountRepo = schedulerTestOpenAIAccountRepo{accounts: []Account{skipped}}
-	_, _, err = svc.SelectAccountWithScheduler(
+	selection, _, err = svc.SelectAccountWithScheduler(
 		ctx,
 		&groupID,
 		"",
@@ -3978,6 +3978,32 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SkipHarvestDoesNotSpend
 		OpenAIUpstreamTransportAny,
 		false,
 	)
-	require.ErrorContains(t, err, "no available OpenAI accounts")
-	require.ErrorContains(t, err, "runtime_blocked=1")
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, skipped.ID, selection.Account.ID)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+
+	bare := skipped
+	bare.Extra = map[string]any{OpenAICodexSkipHarvestExtraKey: true}
+	svc.accountRepo = schedulerTestOpenAIAccountRepo{accounts: []Account{bare}}
+	selection, _, err = svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"",
+		"gpt-6-astra",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, bare.ID, selection.Account.ID)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
 }

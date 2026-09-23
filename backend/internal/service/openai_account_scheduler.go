@@ -1480,13 +1480,6 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			continue
 		}
 		if s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel, req.RequireCompact) {
-			if s.service.openAICodexTicketBlocksAccount(account, s.service.openAICodexTicketOutboundModel(account, req.RequestedModel, req.RequireCompact)) {
-				reason := "ticket_unavailable"
-				if s.service.openAICodexTicketHarvestExcluded(account) {
-					reason = "harvest_excluded"
-				}
-				recordCodexHarvestSelect(account, req.RequestedModel, "skip", reason, "")
-			}
 			filterStats.exclude("runtime_blocked")
 			continue
 		}
@@ -2200,7 +2193,6 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (selection *AccountSelectionResult, decision OpenAIAccountScheduleDecision, err error) {
-	defer func() { s.observeCodexHarvestSelect(selection, requestedModel, err) }()
 	selection, decision, err = s.selectAccountWithSchedulerOnce(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
 	if err == nil || openAIProxyStreamQuarantineBypassed(ctx) {
 		return selection, decision, err
@@ -2218,25 +2210,6 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	}
 	s.logOpenAIProxyStreamQuarantineFailOpen(requestedModel, blocked)
 	return s.selectAccountWithSchedulerOnce(withOpenAIProxyStreamQuarantineBypass(ctx), groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
-}
-
-func (s *OpenAIGatewayService) observeCodexHarvestSelect(selection *AccountSelectionResult, model string, err error) {
-	if s == nil || !s.openAICodexTicketEnabled() {
-		return
-	}
-	model = normalizeOpenAICodexTicketModel(model)
-	if !s.openAICodexTicketGatedModel(model) {
-		return
-	}
-	if selection != nil && selection.Account != nil {
-		if isOpenAICodexTicketAccount(selection.Account) {
-			recordCodexHarvestSelect(selection.Account, model, "selected", "", "")
-		}
-		return
-	}
-	if err != nil {
-		recordCodexHarvestSelect(nil, model, "failed", "unavailable", err.Error())
-	}
 }
 
 type openAIGroupPrivacyRequirementContextKey struct{}

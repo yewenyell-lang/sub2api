@@ -135,7 +135,7 @@ func (s *OpenAIGatewayService) doOpenAIProxyAttempt(req *http.Request, account *
 			err = &runtimeProxyEgressError{error: err, target: target}
 		}
 	}()
-	if s.pluginManager != nil {
+	if s.pluginManager != nil && !s.codexTicketRequestBound(req, account) {
 		resp, handled, err := s.pluginManager.RoundTripOpenAIOAuth(req.Context(), req, target.url, account)
 		if handled {
 			return markOpenAIResponseEgress(resp, req, target.proxyID), err
@@ -157,7 +157,7 @@ func (s *OpenAIGatewayService) doUpstreamWithProxyFallback(ctx context.Context, 
 		primary.proxyID = account.Proxy.ID
 		primary.proxyName = account.Proxy.Name
 	}
-	if account.Proxy == nil || primaryProxyURL == "" ||
+	if s.codexTicketPinsEgress(req, account) || account.Proxy == nil || primaryProxyURL == "" ||
 		primaryProxyURL != account.Proxy.URL() ||
 		(account.Proxy.FallbackMode != FallbackModeDirect && account.Proxy.FallbackMode != FallbackModeProxy) {
 		return s.doOpenAIProxyAttempt(req, account, primary)

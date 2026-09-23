@@ -20,7 +20,8 @@ const (
 // CodexTicketHarvestScope selects which accounts the background harvester
 // probes. Fail-closed ticket-gated routing also refuses leftover tickets on
 // accounts outside this scope. Selected with no groups harvests nothing and
-// admits no leftover tickets on gated models.
+// admits no leftover tickets on gated models. Per-account skip_harvest is
+// not this gate: those accounts are still schedulable.
 type CodexTicketHarvestScope struct {
 	Mode          string  `json:"mode"`
 	GroupIDs      []int64 `json:"group_ids"`
@@ -85,6 +86,8 @@ func cloneCodexTicketHarvestScope(scope CodexTicketHarvestScope) CodexTicketHarv
 	return out
 }
 
+var errCodexHarvestScopeChanged = errors.New("harvest scope changed during read")
+
 // Read the complete scope atomically. Harvest rounds fail closed on storage
 // errors instead of widening to all accounts. Ticket-gated selection reuses
 // this helper, so a 5s cache plus singleflight keeps the hot path off DB.
@@ -95,61 +98,74 @@ func (s *SettingService) GetCodexTicketHarvestScope(ctx context.Context) (CodexT
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if cached, ok := s.openAICodexTicketHarvestScopeCache.Load().(*cachedOpenAICodexTicketHarvestScope); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
-		return cloneCodexTicketHarvestScope(cached.scope), nil
-	}
-	resultCh := s.openAICodexTicketHarvestScopeSF.DoChan(SettingKeyOpenAICodexTicketHarvestScope, func() (any, error) {
-		snapshot := s.openAICodexTicketHarvestScopeCache.Load()
-		if cached, ok := snapshot.(*cachedOpenAICodexTicketHarvestScope); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
-			return cloneCodexTicketHarvestScope(cached.scope), nil
-		}
-		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAICodexTicketHarvestScope)
-		if errors.Is(err, ErrSettingNotFound) {
-			scope, parseErr := parseCodexTicketHarvestScope("")
-			if parseErr != nil {
-				return CodexTicketHarvestScope{}, parseErr
-			}
-			s.openAICodexTicketHarvestScopeCache.CompareAndSwap(snapshot, &cachedOpenAICodexTicketHarvestScope{
-				scope:     cloneCodexTicketHarvestScope(scope),
-				expiresAt: time.Now().Add(openAICodexTicketHarvestScopeCacheTTL).UnixNano(),
-			})
-			return cloneCodexTicketHarvestScope(scope), nil
-		}
-		if err != nil {
+	for {
+		if err := ctx.Err(); err != nil {
 			return CodexTicketHarvestScope{}, err
 		}
-		scope, parseErr := parseCodexTicketHarvestScope(raw)
-		if parseErr != nil {
-			return CodexTicketHarvestScope{}, parseErr
+		if cached, ok := s.openAICodexTicketHarvestScopeCache.Load().(*cachedOpenAICodexTicketHarvestScope); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+			return cloneCodexTicketHarvestScope(cached.scope), nil
 		}
-		s.openAICodexTicketHarvestScopeCache.CompareAndSwap(snapshot, &cachedOpenAICodexTicketHarvestScope{
-			scope:     cloneCodexTicketHarvestScope(scope),
-			expiresAt: time.Now().Add(openAICodexTicketHarvestScopeCacheTTL).UnixNano(),
+		resultCh := s.openAICodexTicketHarvestScopeSF.DoChan(SettingKeyOpenAICodexTicketHarvestScope, func() (any, error) {
+			return s.loadCodexTicketHarvestScope(ctx)
 		})
-		return cloneCodexTicketHarvestScope(scope), nil
-	})
-	select {
-	case <-ctx.Done():
-		return CodexTicketHarvestScope{}, ctx.Err()
-	case result := <-resultCh:
-		if result.Err != nil {
-			return CodexTicketHarvestScope{}, result.Err
+		select {
+		case <-ctx.Done():
+			return CodexTicketHarvestScope{}, ctx.Err()
+		case result := <-resultCh:
+			if errors.Is(result.Err, errCodexHarvestScopeChanged) {
+				continue
+			}
+			if result.Err != nil {
+				return CodexTicketHarvestScope{}, result.Err
+			}
+			cached, ok := result.Val.(*cachedOpenAICodexTicketHarvestScope)
+			if !ok || cached == nil {
+				return CodexTicketHarvestScope{}, fmt.Errorf("invalid harvest scope cache payload")
+			}
+			if s.openAICodexTicketHarvestScopeCache.Load() == cached {
+				return cloneCodexTicketHarvestScope(cached.scope), nil
+			}
 		}
-		if scope, ok := result.Val.(CodexTicketHarvestScope); ok {
-			return cloneCodexTicketHarvestScope(scope), nil
-		}
-		return CodexTicketHarvestScope{}, fmt.Errorf("invalid harvest scope cache payload")
 	}
+}
+
+func (s *SettingService) loadCodexTicketHarvestScope(ctx context.Context) (*cachedOpenAICodexTicketHarvestScope, error) {
+	previous := s.openAICodexTicketHarvestScopeCache.Load()
+	if cached, ok := previous.(*cachedOpenAICodexTicketHarvestScope); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached, nil
+	}
+	// A shared read must survive cancellation of its first waiter.
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAICodexTicketHarvestScope)
+	if errors.Is(err, ErrSettingNotFound) {
+		raw, err = "", nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	scope, err := parseCodexTicketHarvestScope(raw)
+	if err != nil {
+		return nil, err
+	}
+	cached := &cachedOpenAICodexTicketHarvestScope{
+		scope:     cloneCodexTicketHarvestScope(scope),
+		expiresAt: time.Now().Add(openAICodexTicketHarvestScopeCacheTTL).UnixNano(),
+	}
+	// Invalidation replaces the pointer. An older read may neither overwrite
+	// that boundary nor return its stale scope to an existing waiter.
+	if !s.openAICodexTicketHarvestScopeCache.CompareAndSwap(previous, cached) {
+		return nil, errCodexHarvestScopeChanged
+	}
+	return cached, nil
 }
 
 func (s *SettingService) InvalidateOpenAICodexTicketHarvestScopeCache() {
 	if s == nil {
 		return
 	}
-	s.openAICodexTicketHarvestScopeSF.Forget(SettingKeyOpenAICodexTicketHarvestScope)
 	s.openAICodexTicketHarvestScopeCache.Store(&cachedOpenAICodexTicketHarvestScope{expiresAt: 0})
+	s.openAICodexTicketHarvestScopeSF.Forget(SettingKeyOpenAICodexTicketHarvestScope)
 }
 
 func (scope CodexTicketHarvestScope) includes(account *Account) bool {

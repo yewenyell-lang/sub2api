@@ -137,8 +137,6 @@ type SettingService struct {
 	openAICodexTicketFailClosedSF      singleflight.Group
 	openAICodexTicketModelsCache       atomic.Value // *cachedOpenAICodexTicketModels
 	openAICodexTicketModelsSF          singleflight.Group
-	codexHarvestTunablesCache          atomic.Value // *cachedCodexHarvestTunablesRaw
-	codexHarvestTunablesSF             singleflight.Group
 	openAICodexTicketHarvestProxyCache atomic.Value // *cachedOpenAICodexTicketHarvestProxy
 	openAICodexTicketHarvestProxySF    singleflight.Group
 	openAICodexTicketHarvestScopeCache atomic.Value // *cachedOpenAICodexTicketHarvestScope

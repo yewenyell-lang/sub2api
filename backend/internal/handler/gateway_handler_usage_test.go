@@ -37,6 +37,8 @@ func TestUsageUnrestrictedIncludesWeeklyWindowStart(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
+		nil,
 	)
 
 	require.Equal(t, http.StatusOK, recorder.Code)

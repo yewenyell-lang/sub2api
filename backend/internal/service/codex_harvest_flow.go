@@ -15,7 +15,9 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/mihomo"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
 
@@ -37,7 +39,6 @@ type CodexHarvestFlowEvent struct {
 	AccountName    string    `json:"account_name,omitempty"`
 	Model          string    `json:"model,omitempty"`
 	Node           string    `json:"node,omitempty"`
-	NodeName       string    `json:"node_name,omitempty"`
 	HTTPStatus     int       `json:"http_status,omitempty"`
 	Length         int       `json:"length,omitempty"`
 	Blocks         int       `json:"blocks,omitempty"`
@@ -56,7 +57,6 @@ type CodexHarvestFlowStage struct {
 	Detail         string     `json:"detail,omitempty"`
 	At             *time.Time `json:"at,omitempty"`
 	Node           string     `json:"node,omitempty"`
-	NodeName       string     `json:"node_name,omitempty"`
 	Model          string     `json:"model,omitempty"`
 	HTTPStatus     int        `json:"http_status,omitempty"`
 	Length         int        `json:"length,omitempty"`
@@ -72,17 +72,11 @@ type CodexHarvestFlowAccount struct {
 	Schedulable  bool                      `json:"schedulable"`
 	SkipHarvest  bool                      `json:"skip_harvest"`
 	InScope      bool                      `json:"in_scope"`
+	Availability string                    `json:"availability"`
+	RecoverAt    *time.Time                `json:"recover_at,omitempty"`
 	Tickets      []OpenAICodexTicketStatus `json:"tickets"`
 	ReadyCount   int                       `json:"ready_count"`
 	BlockedCount int                       `json:"blocked_count"`
-
-	// Availability 当前可用性（口径见 ResolveCodexAccountAvailability，与调度 SQL 一致）。
-	// 取值：available / rate_limited / overload / temp_unschedulable / error / disabled / expired
-	Availability string `json:"availability"`
-	// RecoverAt 被时间窗挡住时预计恢复时间；可用或永久性不可用时为 nil。
-	RecoverAt *time.Time `json:"recover_at,omitempty"`
-	// TempUnschedulableReason 临时不可调度的原因原文（仅排查展示用）。
-	TempUnschedulableReason string `json:"temp_unschedulable_reason,omitempty"`
 }
 
 type CodexHarvestFlowHarvest struct {
@@ -90,6 +84,7 @@ type CodexHarvestFlowHarvest struct {
 	FailClosed        bool     `json:"fail_closed"`
 	Strategy          string   `json:"strategy"`
 	ScopeMode         string   `json:"scope_mode,omitempty"`
+	ScopeError        bool     `json:"scope_error,omitempty"`
 	AccountPolicy     string   `json:"account_policy,omitempty"`
 	GroupIDs          []int64  `json:"group_ids,omitempty"`
 	Models            []string `json:"models"`
@@ -97,10 +92,8 @@ type CodexHarvestFlowHarvest struct {
 	ProbeIntervalSec  int      `json:"probe_interval_seconds"`
 	CooldownSec       int      `json:"cooldown_seconds"`
 	MaxProbesPerRound int      `json:"max_probes_per_round"`
+	RefreshBeforeSec  int      `json:"refresh_before_seconds"`
 	HarvestProxy      string   `json:"harvest_proxy,omitempty"`
-	// 以下两项此前未回传，导致前端无法回读、只能硬编码默认值（永远显示 25/600）。
-	AttemptTimeoutSec int `json:"attempt_timeout_seconds"`
-	RefreshBeforeSec  int `json:"refresh_before_seconds"`
 }
 
 type CodexHarvestFlowSidecar struct {
@@ -111,7 +104,6 @@ type CodexHarvestFlowSidecar struct {
 	Group      string     `json:"group,omitempty"`
 	Type       string     `json:"type,omitempty"`
 	Now        string     `json:"now,omitempty"`
-	NowName    string     `json:"now_name,omitempty"`
 	AllCount   int        `json:"all_count,omitempty"`
 	Error      string     `json:"error,omitempty"`
 	ObservedAt *time.Time `json:"observed_at,omitempty"`
@@ -137,6 +129,16 @@ type CodexHarvestFlowSnapshot struct {
 	Accounts    []CodexHarvestFlowAccount `json:"accounts"`
 	Counts      CodexHarvestFlowCounts    `json:"counts"`
 	Events      []CodexHarvestFlowEvent   `json:"events"`
+	Runtime     *CodexHarvestRuntime      `json:"runtime,omitempty"`
+}
+
+type CodexHarvestFlowRepository interface {
+	List(context.Context, int) ([]CodexHarvestFlowEvent, error)
+	Append(context.Context, CodexHarvestFlowEvent) error
+}
+
+type harvestFlowStoreBox struct {
+	repo CodexHarvestFlowRepository
 }
 
 type codexHarvestFlowRing struct {
@@ -147,6 +149,7 @@ type codexHarvestFlowRing struct {
 	lastNow  string
 	lastType string
 	lastAll  int
+	persist  atomic.Value
 }
 
 var defaultCodexHarvestFlow = &codexHarvestFlowRing{skips: make(map[string]time.Time)}
@@ -183,13 +186,61 @@ func recordCodexHarvestFlow(event CodexHarvestFlowEvent) {
 	event.Reason = clipFlowText(event.Reason, 64)
 	event.Detail = clipFlowText(event.Detail, 240)
 	defaultCodexHarvestFlow.mu.Lock()
-	defer defaultCodexHarvestFlow.mu.Unlock()
 	if event.ID == "" {
 		event.ID = fmt.Sprintf("%d-%d", event.At.UnixNano(), defaultCodexHarvestFlow.seq.Add(1))
 	}
 	defaultCodexHarvestFlow.events = append(defaultCodexHarvestFlow.events, event)
 	if overflow := len(defaultCodexHarvestFlow.events) - codexHarvestFlowCap; overflow > 0 {
 		defaultCodexHarvestFlow.events = append([]CodexHarvestFlowEvent(nil), defaultCodexHarvestFlow.events[overflow:]...)
+	}
+	defaultCodexHarvestFlow.mu.Unlock()
+	persistCodexHarvestFlow(event)
+}
+
+func bindCodexHarvestFlowStore(repo CodexHarvestFlowRepository) {
+	defaultCodexHarvestFlow.persist.Store(&harvestFlowStoreBox{repo: repo})
+	if repo == nil {
+		return
+	}
+	hydrateCodexHarvestFlow(repo)
+}
+
+func harvestFlowStore() CodexHarvestFlowRepository {
+	box, _ := defaultCodexHarvestFlow.persist.Load().(*harvestFlowStoreBox)
+	if box == nil {
+		return nil
+	}
+	return box.repo
+}
+
+func hydrateCodexHarvestFlow(repo CodexHarvestFlowRepository) {
+	if repo == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	events, err := repo.List(ctx, codexHarvestFlowCap)
+	cancel()
+	if err != nil {
+		logger.L().Warn("codex harvest flow hydrate failed", zap.Error(err))
+		return
+	}
+	defaultCodexHarvestFlow.mu.Lock()
+	defer defaultCodexHarvestFlow.mu.Unlock()
+	if len(defaultCodexHarvestFlow.events) > 0 {
+		return
+	}
+	defaultCodexHarvestFlow.events = append([]CodexHarvestFlowEvent(nil), events...)
+}
+
+func persistCodexHarvestFlow(event CodexHarvestFlowEvent) {
+	repo := harvestFlowStore()
+	if repo == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	if err := repo.Append(ctx, event); err != nil {
+		logger.L().Warn("codex harvest flow persist failed", zap.Error(err))
 	}
 }
 
@@ -206,6 +257,10 @@ func recordCodexHarvestNode(now, groupType string, allCount int) {
 	if now == "" {
 		return
 	}
+	// Mihomo's controller reports the stable node ID in connection chains.
+	// Resolve the operator-facing label before persisting the flow event; the
+	// resolver falls back to the ID when the managed snapshot has no label.
+	now = mihomo.NodeDisplayName(now)
 	defaultCodexHarvestFlow.mu.Lock()
 	if allCount > 0 {
 		defaultCodexHarvestFlow.lastAll = allCount
@@ -251,6 +306,13 @@ func recordCodexHarvestProbe(account *Account, model, result, node, detail strin
 		Result:         result,
 		Detail:         detail,
 	}
+	if result != "success" {
+		message, _, _ := describeCodexHarvestOutcome(result, detail, httpStatus, length, blocks, expectedLength, expectedBlocks, model, node)
+		event.Detail = message
+		event.Reason = result
+	} else if strings.TrimSpace(detail) == "" && length > 0 {
+		event.Detail = fmt.Sprintf("合格门票 %d 字节 / %d 块", length, blocks)
+	}
 	if account != nil {
 		event.AccountID = account.ID
 		event.AccountName = account.Name
@@ -266,6 +328,7 @@ func recordCodexHarvestTicketStore(account *Account, ticket *openAICodexTicket, 
 		Stage:    "ticket",
 		Kind:     "accept",
 		Model:    ticket.Model,
+		Node:     ticket.HarvestNodeName,
 		Length:   ticket.Length,
 		Blocks:   ticket.Blocks,
 		Accepted: true,
@@ -621,7 +684,7 @@ func nodeFromChains(chains []string) string {
 	return ""
 }
 
-func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *SettingService, accounts []Account) CodexHarvestFlowSnapshot {
+func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *SettingService, accounts []Account, controls ...*CodexHarvestService) CodexHarvestFlowSnapshot {
 	now := time.Now()
 	ticketCfg := config.OpenAICodexTicketConfig{}
 	if cfg != nil {
@@ -639,40 +702,62 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 	if ticketCfg.MaxProbesPerRound <= 0 {
 		ticketCfg.MaxProbesPerRound = 6
 	}
-	if len(ticketCfg.Models) == 0 {
+	if ticketCfg.Models == nil {
 		ticketCfg.Models = []string{openAICodexTicketDefaultModel, openAICodexTicketDefaultSolModel}
 	}
 	enabled := ticketCfg.Enabled
 	failClosed := ticketCfg.FailClosed
 	harvestProxy := strings.TrimSpace(ticketCfg.HarvestProxyURL)
 	strategy := "standby"
+	scopeError := false
 	scope := CodexTicketHarvestScope{Mode: "all", AccountPolicy: CodexHarvestSchedulableOnly}
 	if settings != nil {
 		enabled = settings.GetOpenAICodexTicketEnabled(ctx, enabled)
 		failClosed = settings.GetOpenAICodexTicketFailClosed(ctx)
 		ticketCfg.Models = settings.GetOpenAICodexTicketModels(ctx, ticketCfg.Models)
-		ticketCfg.HarvestProbeIntervalSeconds = settings.GetOpenAICodexTicketProbeIntervalSeconds(ctx, ticketCfg.HarvestProbeIntervalSeconds)
-		ticketCfg.HarvestCooldownSeconds = settings.GetOpenAICodexTicketCooldownSeconds(ctx, ticketCfg.HarvestCooldownSeconds)
-		ticketCfg.MaxProbesPerRound = settings.GetOpenAICodexTicketMaxProbesPerRound(ctx, ticketCfg.MaxProbesPerRound)
-		ticketCfg.HarvestAttemptTimeoutSeconds = settings.GetOpenAICodexTicketAttemptTimeoutSeconds(ctx, ticketCfg.HarvestAttemptTimeoutSeconds)
-		ticketCfg.RefreshBeforeSeconds = settings.GetOpenAICodexTicketRefreshBeforeSeconds(ctx, ticketCfg.RefreshBeforeSeconds)
 		if proxy := settings.GetOpenAICodexTicketHarvestProxyURL(ctx); proxy != "" {
 			harvestProxy = proxy
 		}
 		strategy = settings.GetCodexTicketStrategy(ctx)
 		if current, err := settings.GetCodexTicketHarvestScope(ctx); err == nil {
 			scope = current
+		} else {
+			scopeError = true
+			scope.Mode = "selected"
+			scope.GroupIDs = []int64{}
 		}
+	}
+	var runtime *CodexHarvestRuntime
+	if len(controls) > 0 && controls[0] != nil {
+		v, _, _ := controls[0].Controls(ctx)
+		applyHarvestSpeed(&ticketCfg, v.Speed)
+		state := controls[0].Runtime()
+		runtime = &state
 	}
 	ticketCfg.Enabled = enabled
 	ticketCfg.FailClosed = failClosed
+	rawEvents := listCodexHarvestFlowEvents()
+	events := make([]CodexHarvestFlowEvent, 0, len(rawEvents))
+	for _, event := range rawEvents {
+		if event.Stage == "select" {
+			continue
+		}
+		events = append(events, event)
+	}
+	for i := range events {
+		if strings.TrimSpace(events[i].Node) != "" {
+			events[i].Node = mihomo.NodeDisplayName(events[i].Node)
+		}
+	}
 	snapshot := CodexHarvestFlowSnapshot{
+		Runtime:     runtime,
 		GeneratedAt: now,
 		Harvest: CodexHarvestFlowHarvest{
 			Enabled:           enabled,
 			FailClosed:        failClosed,
 			Strategy:          strategy,
 			ScopeMode:         scope.Mode,
+			ScopeError:        scopeError,
 			AccountPolicy:     scope.AccountPolicy,
 			GroupIDs:          scope.GroupIDs,
 			Models:            ticketCfg.Models,
@@ -680,12 +765,12 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 			ProbeIntervalSec:  ticketCfg.HarvestProbeIntervalSeconds,
 			CooldownSec:       ticketCfg.HarvestCooldownSeconds,
 			MaxProbesPerRound: ticketCfg.MaxProbesPerRound,
-			HarvestProxy:      MaskProxyURL(harvestProxy),
-			AttemptTimeoutSec: ticketCfg.HarvestAttemptTimeoutSeconds,
 			RefreshBeforeSec:  ticketCfg.RefreshBeforeSeconds,
+			HarvestProxy:      MaskProxyURL(harvestProxy),
 		},
-		Sidecar: observeCodexHarvestProxy(ctx, harvestProxy),
-		Events:  listCodexHarvestFlowEvents(),
+		Sidecar:  observeCodexHarvestProxy(ctx, harvestProxy),
+		Events:   events,
+		Accounts: []CodexHarvestFlowAccount{},
 	}
 	if snapshot.Harvest.HarvestProxy == "" && harvestProxy == mihomo.Endpoint {
 		snapshot.Harvest.HarvestProxy = mihomo.Endpoint
@@ -696,20 +781,22 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 		}
 		availability, recoverAt := ResolveCodexAccountAvailability(&account, now)
 		item := CodexHarvestFlowAccount{
-			ID:          account.ID,
-			Name:        account.Name,
-			Status:      account.Status,
-			Schedulable: account.Schedulable,
-			SkipHarvest: openAICodexSkipHarvest(&account),
-			InScope:     !openAICodexSkipHarvest(&account) && scope.includes(&account),
-			Tickets:     OpenAICodexTicketStatuses(&account, ticketCfg, now),
-
-			Availability:            availability,
-			RecoverAt:               recoverAt,
-			TempUnschedulableReason: account.TempUnschedulableReason,
+			ID:           account.ID,
+			Name:         account.Name,
+			Status:       account.Status,
+			Schedulable:  account.Schedulable,
+			SkipHarvest:  openAICodexSkipHarvest(&account),
+			InScope:      !openAICodexSkipHarvest(&account) && scope.includes(&account),
+			Availability: availability,
+			RecoverAt:    recoverAt,
+			Tickets:      OpenAICodexTicketStatuses(&account, ticketCfg, now),
 		}
-		for _, ticket := range item.Tickets {
-			if ticket.Ready {
+		for i := range item.Tickets {
+			ticket := &item.Tickets[i]
+			if ticketCfg.FailClosed && !item.SkipHarvest && !item.InScope {
+				ticket.Blocked = true
+			}
+			if ticket.Ready && !ticket.Blocked {
 				item.ReadyCount++
 				snapshot.Counts.TicketsReady++
 			}
@@ -739,13 +826,6 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 		}
 	}
 	snapshot.Stages = buildCodexHarvestFlowStages(snapshot)
-	snapshot.Sidecar.NowName = mihomo.NodeDisplayName(snapshot.Sidecar.Now)
-	for i := range snapshot.Events {
-		snapshot.Events[i].NodeName = mihomo.NodeDisplayName(snapshot.Events[i].Node)
-	}
-	for i := range snapshot.Stages {
-		snapshot.Stages[i].NodeName = mihomo.NodeDisplayName(snapshot.Stages[i].Node)
-	}
 	snapshot.Events = reverseCodexHarvestFlowEvents(snapshot.Events)
 	return snapshot
 }
@@ -943,4 +1023,24 @@ func copyFlowMetrics(stage *CodexHarvestFlowStage, event CodexHarvestFlowEvent) 
 	stage.Blocks = event.Blocks
 	stage.ExpectedLength = event.ExpectedLength
 	stage.ExpectedBlocks = event.ExpectedBlocks
+}
+
+func describeCodexHarvestOutcome(kind, raw string, status, length, blocks, expectedLen, expectedBlk int, model, node string) (message, level, detail string) {
+	if kind == "success" {
+		detailParts := []string{fmt.Sprintf("len=%d blk=%d", length, blocks)}
+		if node != "" {
+			detailParts = append(detailParts, "node="+node)
+		}
+		return fmt.Sprintf("成功捕获合规门票（%d 字节 / %d 块）", length, blocks), "OK", strings.Join(detailParts, " · ")
+	}
+	if kind == "invalid_state" && (blocks == 11 || blocks == 13 || length == 312 || length == 356) {
+		_, _, detail = describeCodexProbeFailure(raw, status, model, node)
+		return fmt.Sprintf("拿到的是降智票据（%d 字节 / %d 块），已拒收 → 换节点重试", length, blocks), "WARN",
+			fmt.Sprintf("%s · 合规应为 %d/%d", detail, expectedLen, expectedBlk)
+	}
+	if kind == "rate_limited" || status == http.StatusTooManyRequests {
+		_, _, detail = describeCodexProbeFailure(raw, status, model, node)
+		return "上游限流了，进入冷静期后自动继续", "WARN", detail
+	}
+	return describeCodexProbeFailure(raw, status, model, node)
 }

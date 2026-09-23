@@ -110,3 +110,39 @@ func TestRuntimeProxyFallbackDoesNotRedirectTicketHarvest(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, 1, calls, "harvesting must not use the business proxy's direct fallback")
 }
+
+func TestBoundTicketPinsHarvestEgressAndSkipsFallback(t *testing.T) {
+	account := ticketTestAccount(41)
+	primary := proxyForTest(1, "primary.invalid", 8080)
+	primary.FallbackMode, primary.BackupProxyID = FallbackModeProxy, i64(2)
+	backup := proxyForTest(2, "backup.invalid", 8080)
+	account.Proxy, account.ProxyID = primary, i64(primary.ID)
+	state := fakeCodexTicketState(292)
+	var calls int
+	var seen []string
+	upstream := &runtimeFallbackUpstream{do: func(req *http.Request, proxy string, _ int64, _ int) (*http.Response, error) {
+		calls++
+		seen = append(seen, proxy)
+		require.Equal(t, state, req.Header.Get(openAICodexTurnStateHeader))
+		require.NoError(t, req.Body.Close())
+		// Pinned tickets skip the fallback tracer. If pin is later removed, this
+		// GetConn is what would otherwise authorize a second egress hop.
+		if tr := httptrace.ContextClientTrace(req.Context()); tr != nil && tr.GetConn != nil {
+			tr.GetConn("primary.invalid")
+		}
+		return nil, syscall.ECONNREFUSED
+	}}
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, Models: []string{"gpt-6-astra"}}, upstream)
+	svc.proxyRepo = &fakeProxyLookup{byID: map[int64]*Proxy{backup.ID: backup}}
+	require.NoError(t, svc.storeOpenAICodexTicket(context.Background(), account, &openAICodexTicket{
+		Model: "gpt-6-astra", State: state, Length: 292, HarvestProxyURL: primary.URL(),
+		CapturedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	}))
+	req, err := http.NewRequest(http.MethodPost, "https://example.invalid/responses", strings.NewReader("{}"))
+	require.NoError(t, err)
+	req.Header.Set(openAICodexTurnStateHeader, state)
+	_, err = svc.doOpenAIUpstream(req, primary.URL(), account)
+	require.Error(t, err)
+	require.Equal(t, 1, calls)
+	require.Equal(t, []string{primary.URL()}, seen)
+}

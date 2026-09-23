@@ -56,6 +56,44 @@ func TestSubscriptionImportsOnlyNodes(t *testing.T) {
 	require.Contains(t, string(b), "127.0.0.1:9098")
 }
 
+func TestSubscriptionDownloadCanUseManagedProxy(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "clash.meta", r.Header.Get("User-Agent"))
+		_, _ = w.Write([]byte("proxies:\n  - {name: proxied-node, type: socks5, server: example.org, port: 1080}\n"))
+	}))
+	defer proxy.Close()
+	m := New(t.TempDir())
+	t.Cleanup(m.Close)
+	body, err := m.getViaProxy(context.Background(), "http://subscription.invalid/sub", 4<<20, "clash.meta", proxy.URL)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "proxied-node")
+}
+
+func TestSubscriptionDirectFallbackWithDynamicExit(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadGateway) }))
+	defer proxy.Close()
+	sub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "clash.meta", r.Header.Get("User-Agent"))
+		_, _ = w.Write([]byte("proxies:\n  - {name: airport, type: http, server: example.org, port: 2000}\n"))
+	}))
+	defer sub.Close()
+	m := New(t.TempDir())
+	t.Cleanup(m.Close)
+	m.state.Running = true
+	m.subscriptionProxyURL = proxy.URL
+	m.saved.DynamicProxies = []string{"http://user:private-password@example.org:2000"}
+	nodes, names, err := m.fetchNodes(context.Background(), []string{sub.URL + "/?token=private-token"})
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.Len(t, names, 1)
+	require.Len(t, m.saved.DynamicProxies, 1)
+	// A failed direct fetch must not leak subscription or proxy credentials.
+	_, _, err = m.fetchNodes(context.Background(), []string{proxy.URL + "/?token=private-token"})
+	require.ErrorContains(t, err, "and direct")
+	require.NotContains(t, err.Error(), "private-token")
+	require.NotContains(t, err.Error(), "private-password")
+}
+
 func TestFailedSubscriptionPreservesSavedConfiguration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusForbidden) }))
 	defer server.Close()
@@ -69,6 +107,24 @@ func TestFailedSubscriptionPreservesSavedConfiguration(t *testing.T) {
 	require.Equal(t, []string{"https://old.example/sub?token=old-secret"}, m.saved.URLs)
 	_, err = os.Stat(filepath.Join(m.dir, "settings.json"))
 	require.True(t, os.IsNotExist(err))
+}
+
+func TestFailedSubscriptionKeepsRunningPhase(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusForbidden) }))
+	defer server.Close()
+	m := New(t.TempDir())
+	t.Cleanup(m.Close)
+	m.state.Installed = true
+	m.state.Running = true
+	m.subscriptionProxyURL = server.URL
+	m.saved = saved{URLs: []string{"https://old.example/sub"}, Nodes: []map[string]any{{"name": "node-one", "type": "socks5", "server": "example.org", "port": 1080}}}
+
+	require.NoError(t, m.Submit("apply", []string{server.URL}, false))
+	require.Eventually(t, func() bool { return !m.Status().Busy }, 2*time.Second, 10*time.Millisecond)
+	status := m.Status()
+	require.True(t, status.Running)
+	require.Equal(t, "running", status.Phase)
+	require.Contains(t, status.Error, "HTTP 403")
 }
 
 func TestTasksSerializeAndCancel(t *testing.T) {

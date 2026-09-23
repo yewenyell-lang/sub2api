@@ -35,13 +35,13 @@ func (r *bmSettingRepo) Set(_ context.Context, _, _ string) error {
 }
 
 func (r *bmSettingRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
-	out := make(map[string]string)
+	values := make(map[string]string, len(keys))
 	for _, key := range keys {
-		if value, exists := r.values[key]; exists {
-			out[key] = value
+		if value, ok := r.values[key]; ok {
+			values[key] = value
 		}
 	}
-	return out, nil
+	return values, nil
 }
 
 func (r *bmSettingRepo) SetMultiple(_ context.Context, settings map[string]string) error {
