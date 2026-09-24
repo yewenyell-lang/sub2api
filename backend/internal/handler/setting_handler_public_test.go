@@ -94,7 +94,7 @@ func TestSettingHandler_GetPublicSettings_ExposesTencentCaptchaConfiguration(t *
 			service.SettingKeyTencentCaptchaRegion:  service.TencentCaptchaRegionINTL,
 		},
 	}
-	h := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), "test-version")
+	h := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), "test-version", "test-our-version")
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+
+enableAutoUnmount(afterEach)
 
 const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
@@ -814,6 +816,7 @@ describe('EditAccountModal', () => {
     // 关闭后应从 extra 中删除该键，而不是写入 false
     await toggle.trigger('click')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty(

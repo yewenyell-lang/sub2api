@@ -381,7 +381,7 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_AllowsGeminiAndBananaImage
 			require.NoError(t, err)
 			require.NotNil(t, parsed)
 			require.Equal(t, model, parsed.Model)
-			require.Equal(t, OpenAIImagesCapabilityNative, parsed.RequiredCapability)
+			require.Equal(t, OpenAIImagesCapabilityAPIKey, parsed.RequiredCapability)
 		})
 	}
 }

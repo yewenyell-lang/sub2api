@@ -169,19 +169,20 @@ type SystemSettings struct {
 	CustomMenuItems             string // JSON array of custom menu items
 	CustomEndpoints             string // JSON array of custom endpoints
 
-	DefaultConcurrency           int
-	DefaultBalance               float64
-	RiskControlEnabled           bool
-	CyberSessionBlockEnabled     bool
-	CyberSessionBlockTTLSeconds  int
-	AffiliateEnabled             bool
-	AffiliateRebateRate          float64
-	AffiliateRebateFreezeHours   int
-	AffiliateRebateDurationDays  int
-	AffiliateRebatePerInviteeCap float64
-	AdminRechargeRebateEnabled   bool
-	DefaultUserRPMLimit          int
-	DefaultSubscriptions         []DefaultSubscriptionSetting
+	DefaultConcurrency                int
+	DefaultBalance                    float64
+	RiskControlEnabled                bool
+	CyberSessionBlockEnabled          bool
+	CyberSessionBlockTTLSeconds       int
+	CyberSessionIdentityStrictEnabled bool
+	AffiliateEnabled                  bool
+	AffiliateRebateRate               float64
+	AffiliateRebateFreezeHours        int
+	AffiliateRebateDurationDays       int
+	AffiliateRebatePerInviteeCap      float64
+	AdminRechargeRebateEnabled        bool
+	DefaultUserRPMLimit               int
+	DefaultSubscriptions              []DefaultSubscriptionSetting
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`
@@ -254,8 +255,8 @@ type SystemSettings struct {
 	OpenAICodexClientVersion               string // 出站声明的 Codex 客户端版本号（管理员覆写）；空值跟随自动同步值
 	OpenAICodexClientVersionSynced         string // 自动同步到的官方最新稳定版版本号（只读展示）
 	OpenAICodexVersionAutoSyncEnabled      bool   // 是否启用 Codex 客户端版本号自动同步（默认 true）
-	OpenAICodexTicketEnabled               bool     // Codex 292 打票总开关；关闭则不打票不注入
-	OpenAICodexTicketHarvestProxyURL       string   // Codex 292 打票代理 URL；空则回退 yaml/env
+	OpenAICodexTicketEnabled               bool   // Codex 292 打票总开关；关闭则不打票不注入
+	OpenAICodexTicketHarvestProxyURL       string // Codex 292 打票代理 URL；空则回退 yaml/env
 	OpenAICodexTicketStaticProxyURL        string
 	OpenAICodexTicketModels                []string // Codex 292 打票模型列表；缺失时回退 yaml/env
 	ClaudeCodeClientVersion                string   // 出站声明的 Claude Code CLI 客户端版本号（管理员覆写）；空值跟随自动同步值

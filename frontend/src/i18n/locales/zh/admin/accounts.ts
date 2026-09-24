@@ -1139,6 +1139,13 @@ export default {
       billingRateMultiplierHint: '0 表示不计费，仅影响账号计费',
       groupBillingRateMultiplier: '分组计费倍率',
       groupBillingRateMultiplierHint: '参与用户/API Key 扣费；默认 1。分组 0.2x 时设置 5x 可恢复 1x 原价',
+      groupModelLimits: {
+        title: '各分组可用模型',
+        hint: '账号属于多个分组时，可以限制它在某个分组里只服务部分模型；只能在账号本身支持的模型里收窄。默认不限制。',
+        allModels: '全部模型',
+        selectedModels: '仅限部分',
+        emptyHint: '还没有选择模型，保存后该分组仍按不限制处理。'
+      },
       expiresAt: '过期时间',
       expiresAtHint: '留空表示不过期',
       expiresAtTimezoneHint: '输入按浏览器本地时区（{timezone}）解释。',
@@ -1621,6 +1628,22 @@ export default {
       testModel: '测试模型',
       testPrompt: '提示词："hi"',
       pelicanTest: {
+        recordCount: '共 {count} 条记录',
+        recordId: '记录',
+        moreRecords: '加载更多记录',
+        recordLoadError: '这条记录已清理或暂时无法加载，点击卡片可重试。',
+
+        historyLoadError: '部分自动记录加载失败，已保留可用的手动记录。',
+        dashboardHint: '展示所有保留的自动和手动测试，每次输出一张卡片，每 15 秒刷新。点击卡片可放大查看动画。',
+        scheduledPreview: '定时测试预览',
+        sourceManual: '手动',
+        sourceScheduled: '定时',
+        generatedAt: '生成时间',
+        duration: '耗时',
+
+        schedule: '定时测试',
+        preview: '查看 HTML / 动画',
+        scheduleHint: '关闭网页后仍按 Cron 执行。默认保留最近 100 份结果，可设置 1–200 份；超过 7 天自动清理，暂停后仍清理。',
         menu: '鹈鹕测智',
         title: '鹈鹕测智',
         subtitle: '同题并行生成 HTML，人工比较结果',

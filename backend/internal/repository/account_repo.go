@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -243,11 +244,15 @@ func (r *accountRepository) CreateWithAccountGroups(ctx context.Context, account
 		builders := make([]*dbent.AccountGroupCreate, 0, len(groups))
 		for i := range groups {
 			groups[i].AccountID = account.ID
-			builders = append(builders, txClient.AccountGroup.Create().
+			groups[i].AllowedModels = service.NormalizeGroupAllowedModels(groups[i].AllowedModels)
+			builder := txClient.AccountGroup.Create().
 				SetAccountID(account.ID).
 				SetGroupID(groups[i].GroupID).
-				SetPriority(groups[i].Priority),
-			)
+				SetPriority(groups[i].Priority)
+			if len(groups[i].AllowedModels) > 0 {
+				builder.SetAllowedModels(groups[i].AllowedModels)
+			}
+			builders = append(builders, builder)
 		}
 		if _, err := txClient.AccountGroup.CreateBulk(builders...).Save(ctx); err != nil {
 			return err
@@ -657,9 +662,14 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'ollama_cloud_usage_snapshot',
 			COALESCE(
 				(
+					-- opencode_go 平台分支：新旧都是 opencode_go Go 订阅（account_mode
+					-- 未设置/非 zen 均为 Go，与 GetOpenCodeAccountMode 默认兼容一致），
+					-- 不校验 base_url。
 					(platform = 'opencode_go' AND $2 = 'opencode_go'
 						AND COALESCE(btrim(credentials ->> 'account_mode') <> 'zen', true)
 						AND COALESCE(btrim($4::jsonb ->> 'account_mode') <> 'zen', true))
+					-- 挂载白名单分支：新旧平台都在白名单内且 base_url 均为官方
+					-- OpenCode Go 基址（与 Ollama 同范式，允许白名单内跨平台）。
 					OR (platform IN (`+opencodeGoUsageMountPlatformsSQL+`)
 						AND $2 IN (`+opencodeGoUsageMountPlatformsSQL+`)
 						AND `+opencodeGoBaseURLMatchSQLPrefix+`credentials ->> 'base_url'`+opencodeGoBaseURLMatchSQLSuffix+`
@@ -1968,6 +1978,12 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 		return err
 	}
 
+	// 绑定关系是整体删除重建的；仍保留的分组要沿用原有的模型限制，否则每次改分组都会把它清掉。
+	existingAllowedModels, err := loadAccountGroupAllowedModels(ctx, txClient, accountID)
+	if err != nil {
+		return err
+	}
+
 	if _, err := txClient.AccountGroup.Delete().Where(dbaccountgroup.AccountIDEQ(accountID)).Exec(ctx); err != nil {
 		return err
 	}
@@ -1981,11 +1997,14 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 
 	builders := make([]*dbent.AccountGroupCreate, 0, len(groupIDs))
 	for i, groupID := range groupIDs {
-		builders = append(builders, txClient.AccountGroup.Create().
+		builder := txClient.AccountGroup.Create().
 			SetAccountID(accountID).
 			SetGroupID(groupID).
-			SetPriority(i+1),
-		)
+			SetPriority(i + 1)
+		if models := existingAllowedModels[groupID]; len(models) > 0 {
+			builder.SetAllowedModels(models)
+		}
+		builders = append(builders, builder)
 	}
 
 	if _, err := txClient.AccountGroup.CreateBulk(builders...).Save(ctx); err != nil {
@@ -2002,6 +2021,82 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue bind groups failed: account=%d err=%v", accountID, err)
 	}
 	return nil
+}
+
+// SetGroupAllowedModels 覆盖账号在各个已绑定分组内的模型限制：allowed 里没有的分组恢复为不限制，
+// 账号未绑定的分组被忽略。有变化时通知调度器刷新该账号的缓存。
+func (r *accountRepository) SetGroupAllowedModels(ctx context.Context, accountID int64, allowed map[int64][]string) error {
+	tx, err := r.client.Tx(ctx)
+	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+		return err
+	}
+
+	var txClient *dbent.Client
+	if err == nil {
+		defer func() { _ = tx.Rollback() }()
+		txClient = tx.Client()
+	} else {
+		// 已处于外部事务中（ErrTxStarted），复用当前 client
+		txClient = r.client
+	}
+
+	entries, err := txClient.AccountGroup.Query().
+		Where(dbaccountgroup.AccountIDEQ(accountID)).
+		All(ctx)
+	if err != nil {
+		return err
+	}
+
+	changedGroupIDs := make([]int64, 0, len(entries))
+	for _, entry := range entries {
+		groupID := entry.GroupID
+		next := service.NormalizeGroupAllowedModels(allowed[groupID])
+		if slices.Equal(next, service.NormalizeGroupAllowedModels(entry.AllowedModels)) {
+			continue
+		}
+		update := txClient.AccountGroup.Update().
+			Where(dbaccountgroup.AccountIDEQ(accountID), dbaccountgroup.GroupIDEQ(groupID))
+		if len(next) == 0 {
+			update.ClearAllowedModels()
+		} else {
+			update.SetAllowedModels(next)
+		}
+		if _, err := update.Save(ctx); err != nil {
+			return err
+		}
+		changedGroupIDs = append(changedGroupIDs, groupID)
+	}
+
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	if len(changedGroupIDs) == 0 {
+		return nil
+	}
+	payload := buildSchedulerGroupPayload(changedGroupIDs)
+	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountGroupsChanged, &accountID, nil, payload); err != nil {
+		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue group allowed models failed: account=%d err=%v", accountID, err)
+	}
+	return nil
+}
+
+// loadAccountGroupAllowedModels 读取账号各分组绑定上已设置的模型限制，只返回有限制的分组。
+func loadAccountGroupAllowedModels(ctx context.Context, client *dbent.Client, accountID int64) (map[int64][]string, error) {
+	entries, err := client.AccountGroup.Query().
+		Where(dbaccountgroup.AccountIDEQ(accountID)).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64][]string, len(entries))
+	for _, entry := range entries {
+		if models := service.NormalizeGroupAllowedModels(entry.AllowedModels); len(models) > 0 {
+			out[entry.GroupID] = models
+		}
+	}
+	return out, nil
 }
 
 func (r *accountRepository) ListSchedulable(ctx context.Context) ([]service.Account, error) {
@@ -3523,11 +3618,12 @@ func (r *accountRepository) loadAccountGroups(ctx context.Context, accountIDs []
 		for _, ag := range entries {
 			groupSvc := groupMap[ag.GroupID]
 			agSvc := service.AccountGroup{
-				AccountID: ag.AccountID,
-				GroupID:   ag.GroupID,
-				Priority:  ag.Priority,
-				CreatedAt: ag.CreatedAt,
-				Group:     groupSvc,
+				AccountID:     ag.AccountID,
+				GroupID:       ag.GroupID,
+				Priority:      ag.Priority,
+				AllowedModels: service.NormalizeGroupAllowedModels(ag.AllowedModels),
+				CreatedAt:     ag.CreatedAt,
+				Group:         groupSvc,
 			}
 			accountGroupsByAccount[ag.AccountID] = append(accountGroupsByAccount[ag.AccountID], agSvc)
 			groupIDsByAccount[ag.AccountID] = append(groupIDsByAccount[ag.AccountID], ag.GroupID)

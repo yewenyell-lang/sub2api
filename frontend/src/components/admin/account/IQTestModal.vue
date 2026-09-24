@@ -1,5 +1,6 @@
 <template>
-  <BaseDialog :show="show" :title="t('admin.accounts.pelicanTest.title')" width="full" @close="handleClose">
+  <PelicanRecordsDashboard v-if="dashboardOpen" :accounts="props.accounts || []" :account="props.account" :manual-record="records[0] || null" @close="dashboardOpen = false" />
+  <BaseDialog :show="show" :title="t('admin.accounts.pelicanTest.title')" width="full" :fullscreen="viewingScheduled" @close="handleClose">
     <div class="space-y-5">
       <div v-if="account" class="flex flex-col items-start gap-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-800/60 dark:bg-amber-950/20 sm:flex-row sm:items-center sm:justify-between">
         <div class="flex items-center gap-3">
@@ -58,18 +59,21 @@
             type="button"
             class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
             :class="activeTab === 'results' ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300' : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-dark-700'"
-            @click="activeTab = 'results'"
+            @click="openManualResults"
           >
-            {{ t('admin.accounts.pelicanTest.results') }}
+            {{ viewingScheduled ? t('admin.accounts.pelicanTest.scheduledPreview') : t('admin.accounts.pelicanTest.results') }}
           </button>
           <button
             type="button"
             class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
             :class="activeTab === 'history' ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300' : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-dark-700'"
-            @click="activeTab = 'history'"
+            @click="dashboardOpen = true"
           >
             {{ t('admin.accounts.pelicanTest.history') }}<span v-if="records.length" class="ml-1">({{ records.length }})</span>
           </button>
+          <button type="button" class="rounded-md px-3 py-1.5 text-sm font-medium"
+            :class="activeTab === 'schedule' ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300' : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-dark-700'"
+            @click="activeTab = 'schedule'">{{ t('admin.accounts.pelicanTest.schedule') }}</button>
         </div>
         <span v-if="running" class="flex items-center gap-1.5 text-xs text-primary-600 dark:text-primary-300">
           <Icon name="refresh" size="sm" class="animate-spin" />
@@ -77,23 +81,33 @@
         </span>
       </div>
 
-      <div v-if="activeTab === 'history'" class="space-y-2">
-        <div v-if="records.length === 0" class="rounded-lg border border-dashed border-gray-300 py-10 text-center text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400">
+      <ScheduledTestsPanel v-if="show && account && activeTab === 'schedule'" :key="account.id" :show="true" embedded
+        :account-id="account.id" :default-model="modelId" :model-options="[{ value: modelId, label: modelId }]"
+        :pelican-config="{ prompt, reasoning_effort: reasoningEffort, parallel_count: Number(parallelCount) }"
+        :disabled="running" @preview="previewScheduled" @history="scheduledRecords = $event" />
+      <div v-else-if="activeTab === 'history'" class="space-y-2">
+        <button v-for="result in scheduledRecords" :key="`scheduled-${result.id}`" type="button"
+          class="flex w-full items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-left transition-colors hover:border-primary-300 hover:bg-primary-50/50 dark:border-dark-600 dark:hover:border-primary-700 dark:hover:bg-primary-900/10"
+          @click="previewScheduled(result)">
+          <span class="min-w-0">
+            <span class="block truncate text-sm font-medium text-gray-800 dark:text-gray-100">
+              {{ t('admin.accounts.pelicanTest.sourceScheduled') }} · {{ result.pelican_config?.model_id || modelId }} / {{ result.pelican_config?.reasoning_effort || reasoningEffort }}
+            </span>
+            <span class="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
+              {{ formatDate(result.started_at) }} · {{ t('admin.accounts.pelicanTest.duration') }} {{ (result.latency_ms / 1000).toFixed(1) }} s
+            </span>
+          </span>
+          <span class="text-xs" :class="result.status === 'success' ? 'text-emerald-600' : 'text-red-500'">{{ t(result.status === 'success' ? 'admin.accounts.pelicanTest.success' : 'admin.accounts.pelicanTest.failed') }}</span>
+        </button>
+        <div v-for="record in records" :key="record.id" class="flex w-full items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-left dark:border-dark-600">
+          <button type="button" class="min-w-0 text-left" @click="loadRecord(record)">
+            <span class="block truncate text-sm font-medium text-gray-800 dark:text-gray-100">{{ t('admin.accounts.pelicanTest.sourceManual') }} · {{ record.modelId }} / {{ record.reasoningEffort }}</span>
+            <span class="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">{{ formatDate(record.createdAt) }} · {{ record.runs.length }} {{ t('admin.accounts.pelicanTest.outputs') }}</span>
+          </button>
+        </div>
+        <div v-if="scheduledRecords.length === 0 && records.length === 0" class="rounded-lg border border-dashed border-gray-300 py-10 text-center text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400">
           {{ t('admin.accounts.pelicanTest.noHistory') }}
         </div>
-        <button
-          v-for="record in records"
-          :key="record.id"
-          type="button"
-          class="flex w-full items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-left transition-colors hover:border-primary-300 hover:bg-primary-50/50 dark:border-dark-600 dark:hover:border-primary-700 dark:hover:bg-primary-900/10"
-          @click="loadRecord(record)"
-        >
-          <span class="min-w-0">
-            <span class="block truncate text-sm font-medium text-gray-800 dark:text-gray-100">{{ record.prompt }}</span>
-            <span class="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">{{ formatDate(record.createdAt) }} · {{ record.modelId }} · {{ record.runs.length }} {{ t('admin.accounts.pelicanTest.outputs') }}</span>
-          </span>
-          <Icon name="chevronRight" size="sm" class="shrink-0 text-gray-400" />
-        </button>
       </div>
 
       <div v-else>
@@ -116,6 +130,11 @@
                 </button>
               </div>
             </header>
+            <div class="space-y-1 px-3 py-2 text-xs text-gray-500 dark:text-gray-400" data-testid="run-metadata">
+              <div>{{ t(run.source === 'scheduled' ? 'admin.accounts.pelicanTest.sourceScheduled' : 'admin.accounts.pelicanTest.sourceManual') }} · {{ run.modelId || '—' }} / {{ run.reasoningEffort || '—' }}</div>
+              <div>{{ t('admin.accounts.pelicanTest.generatedAt') }}：{{ run.startedAt ? formatDate(run.startedAt) : '—' }}</div>
+              <div>{{ t('admin.accounts.pelicanTest.duration') }}：{{ run.durationMs == null ? '—' : `${(run.durationMs / 1000).toFixed(1)} s` }}</div>
+            </div>
             <div v-if="run.html" class="aspect-[4/3] bg-white dark:bg-white">
               <iframe :srcdoc="run.html" class="h-full w-full border-0" sandbox="allow-scripts" referrerpolicy="no-referrer" :title="`${t('admin.accounts.pelicanTest.output')} ${index + 1}`"></iframe>
             </div>
@@ -133,7 +152,7 @@
         </button>
         <div class="flex gap-3">
           <button type="button" class="btn btn-secondary" :disabled="running" @click="handleClose">{{ t('common.close') }}</button>
-          <button type="button" class="btn btn-primary flex items-center gap-2" :disabled="running || !canStart" @click="startTest">
+          <button v-if="activeTab !== 'schedule'" type="button" class="btn btn-primary flex items-center gap-2" :disabled="running || !canStart" @click="startTest">
             <Icon v-if="running" name="refresh" size="sm" class="animate-spin" />
             <Icon v-else name="play" size="sm" />
             {{ running ? t('admin.accounts.pelicanTest.generating') : t('admin.accounts.pelicanTest.start') }}
@@ -145,8 +164,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { extractPelicanHtml as extractHtml } from '@/utils/pelicanHtml'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Input from '@/components/common/Input.vue'
 import TextArea from '@/components/common/TextArea.vue'
@@ -154,7 +174,9 @@ import Select from '@/components/common/Select.vue'
 import { Icon } from '@/components/icons'
 import { buildApiUrl } from '@/api/client'
 import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
-import type { Account } from '@/types'
+import type { Account, AccountListItem, PelicanTestConfig, ScheduledTestResult } from '@/types'
+import ScheduledTestsPanel from './ScheduledTestsPanel.vue'
+import PelicanRecordsDashboard from './PelicanRecordsDashboard.vue'
 
 const { t } = useI18n()
 
@@ -169,6 +191,12 @@ interface TestRun {
   output: string
   html: string
   error: string
+  source?: 'manual' | 'scheduled'
+  startedAt?: string
+  finishedAt?: string
+  durationMs?: number
+  modelId?: string
+  reasoningEffort?: string
 }
 interface TestRecord {
   id: string
@@ -179,17 +207,20 @@ interface TestRecord {
   runs: TestRun[]
 }
 
-const props = defineProps<{ show: boolean; account: Account | null }>()
+const props = defineProps<{ show: boolean; account: Account | null; accounts?: AccountListItem[] }>()
 const emit = defineEmits<{ (event: 'close'): void }>()
 
 const prompt = ref(DEFAULT_PROMPT)
 const modelId = ref('gpt-6-astra')
 const reasoningEffort = ref('medium')
 const parallelCount = ref<string | number>(1)
-const activeTab = ref<'results' | 'history'>('results')
+const activeTab = ref<'results' | 'history' | 'schedule'>('results')
 const running = ref(false)
+const viewingScheduled = ref(false)
+const dashboardOpen = ref(false)
 const runs = ref<TestRun[]>([])
 const records = ref<TestRecord[]>([])
+const scheduledRecords = ref<ScheduledTestResult[]>([])
 const controllers = new Map<string, AbortController>()
 
 const deliveryContract = DELIVERY_CONTRACT
@@ -227,39 +258,45 @@ function saveRecords() {
 }
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value))
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'medium' }).format(new Date(value))
 }
 
-function extractHtml(raw: string): string {
-  let html = raw.trim()
-  const fenced = html.match(/```(?:html|xml)?\s*([\s\S]*?)```/i)
-  if (fenced?.[1]) html = fenced[1].trim()
-  const lower = html.toLowerCase()
-  const start = Math.min(...['<!doctype html', '<html', '<svg'].map((marker) => {
-    const index = lower.indexOf(marker)
-    return index < 0 ? Number.MAX_SAFE_INTEGER : index
-  }))
-  if (start !== Number.MAX_SAFE_INTEGER) html = html.slice(start).trim()
-  if (!/<(?:!doctype\s+html|html|svg)[\s>]/i.test(html)) return ''
-  const end = html.toLowerCase().lastIndexOf('</html>')
-  if (end >= 0) html = html.slice(0, end + '</html>'.length)
-  if (!/<html[\s>]/i.test(html) && /<svg[\s>]/i.test(html)) {
-    html = `<!doctype html><html><head><meta charset="utf-8"><title>Pelican test</title></head><body>${html}</body></html>`
-  }
-  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">`
-  if (/<head[\s>]/i.test(html)) {
-    html = html.replace(/<head([^>]*)>/i, `<head$1>${csp}`)
-  } else {
-    html = html.replace(/<html([^>]*)>/i, `<html$1><head>${csp}<meta charset="utf-8"><title>Pelican test</title></head>`)
-  }
-  return html
+
+function editSchedule(config: PelicanTestConfig, model: string) {
+  if (running.value) return
+  prompt.value = config.prompt
+  modelId.value = model
+  reasoningEffort.value = config.reasoning_effort
+  parallelCount.value = config.parallel_count
+}
+
+function openManualResults() {
+  if (running.value) return
+  viewingScheduled.value = false
+  runs.value = []
+  activeTab.value = 'results'
+}
+
+function previewScheduled(result: ScheduledTestResult) {
+  if (running.value) return
+  const config = result.pelican_config
+  if (config) editSchedule(config, config.model_id || modelId.value)
+  const html = extractHtml(result.response_text)
+  runs.value = [{ id: `scheduled-${result.id}`, status: result.status === 'success' && html ? 'success' : 'error', output: result.response_text, html, error: result.error_message,
+    source: 'scheduled', startedAt: result.started_at, finishedAt: result.finished_at,
+    durationMs: result.latency_ms, modelId: config?.model_id, reasoningEffort: config?.reasoning_effort
+  }]
+  viewingScheduled.value = true
+  activeTab.value = 'results'
 }
 
 function loadRecord(record: TestRecord) {
+  if (running.value) return
   prompt.value = record.prompt
   modelId.value = record.modelId
   reasoningEffort.value = record.reasoningEffort || 'medium'
-  runs.value = record.runs.map((run) => ({ ...run }))
+  runs.value = record.runs.map((run) => ({ ...run, modelId: run.modelId || record.modelId, reasoningEffort: run.reasoningEffort || record.reasoningEffort }))
+  viewingScheduled.value = false
   activeTab.value = 'results'
 }
 
@@ -325,6 +362,8 @@ async function consumeRun(run: TestRun, signal: AbortSignal) {
 }
 
 async function startOne(run: TestRun) {
+  const started = performance.now()
+  run.startedAt = new Date().toISOString()
   const controller = new AbortController()
   controllers.set(run.id, controller)
   try {
@@ -334,12 +373,15 @@ async function startOne(run: TestRun) {
     run.status = 'error'
     run.error = error instanceof Error ? error.message : t('admin.accounts.pelicanTest.failed')
   } finally {
+    run.durationMs = Math.max(0, Math.round(performance.now() - started))
+    run.finishedAt = new Date().toISOString()
     controllers.delete(run.id)
   }
 }
 
 async function startTest() {
-  if (!props.account || !canStart.value) return
+  if (running.value || !props.account || !canStart.value) return
+  viewingScheduled.value = false
   const count = normalizeCount()
   parallelCount.value = count
   runs.value = Array.from({ length: count }, (_, index) => ({
@@ -347,7 +389,10 @@ async function startTest() {
     status: 'running',
     output: '',
     html: '',
-    error: ''
+    error: '',
+    source: 'manual',
+    modelId: modelId.value.trim(),
+    reasoningEffort: reasoningEffort.value
   }))
   activeTab.value = 'results'
   running.value = true
@@ -380,10 +425,14 @@ function downloadAll() {
   runs.value.filter((run) => run.html).forEach((run) => downloadHtml(run))
 }
 
-watch(() => props.show, (show) => {
+onBeforeUnmount(() => { for (const controller of controllers.values()) controller.abort() })
+
+watch(() => [props.show, props.account?.id] as const, ([show]) => {
   if (show) {
     readRecords()
     activeTab.value = 'results'
+    viewingScheduled.value = false
+    scheduledRecords.value = []
     prompt.value = DEFAULT_PROMPT
     modelId.value = 'gpt-6-astra'
     reasoningEffort.value = 'medium'
@@ -393,5 +442,5 @@ watch(() => props.show, (show) => {
     for (const controller of controllers.values()) controller.abort()
     controllers.clear()
   }
-})
+}, { immediate: true })
 </script>

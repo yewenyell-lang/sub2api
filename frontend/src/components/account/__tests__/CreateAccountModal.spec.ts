@@ -1,6 +1,8 @@
 import { defineComponent } from 'vue'
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+enableAutoUnmount(afterEach)
 
 const {
   createAccountMock,
@@ -158,6 +160,7 @@ async function selectButtonByText(wrapper: ReturnType<typeof mountModal>, text: 
   const button = wrapper.findAll('button').find((candidate) => candidate.text().includes(text))
   expect(button).toBeDefined()
   await button?.trigger('click')
+  await flushPromises()
 }
 
 async function submitApiKeyAccount(

@@ -712,6 +712,7 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		usage.GET("", h.Admin.Usage.List)
 		usage.GET("/stats", h.Admin.Usage.Stats)
+		usage.GET("/:id/timing", h.Admin.Usage.Timing)
 		usage.GET("/search-users", h.Admin.Usage.SearchUsers)
 		usage.GET("/search-api-keys", h.Admin.Usage.SearchAPIKeys)
 		usage.GET("/cleanup-tasks", h.Admin.Usage.ListCleanupTasks)
@@ -733,12 +734,14 @@ func registerUserAttributeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 }
 
 func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	admin.GET("/pelican-test-results", h.Admin.ScheduledTest.ListPelicanHistory)
 	plans := admin.Group("/scheduled-test-plans")
 	{
 		plans.POST("", h.Admin.ScheduledTest.Create)
 		plans.PUT("/:id", h.Admin.ScheduledTest.Update)
 		plans.DELETE("/:id", h.Admin.ScheduledTest.Delete)
 		plans.GET("/:id/results", h.Admin.ScheduledTest.ListResults)
+		plans.GET("/:id/results/:resultID", h.Admin.ScheduledTest.GetResult)
 	}
 	// Nested under accounts
 	admin.GET("/accounts/:id/scheduled-test-plans", h.Admin.ScheduledTest.ListByAccount)

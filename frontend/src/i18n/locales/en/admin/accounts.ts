@@ -1038,6 +1038,13 @@ export default {
       billingRateMultiplierHint: '0 = free, affects account billing only',
       groupBillingRateMultiplier: 'Group Billing Multiplier',
       groupBillingRateMultiplierHint: 'Applied to user/API key charges. Default 1; use 5 with a 0.2x group to restore 1x.',
+      groupModelLimits: {
+        title: 'Models per group',
+        hint: 'When this account belongs to several groups, you can limit which of its models a group may use. Limits can only narrow the models the account already supports. No limit by default.',
+        allModels: 'All models',
+        selectedModels: 'Only selected',
+        emptyHint: 'No models selected yet; this group stays unrestricted after saving.'
+      },
       expiresAt: 'Expires At',
       expiresAtHint: 'Leave empty for no expiration',
       expiresAtTimezoneHint: 'Input is interpreted in your browser time zone ({timezone}).',
@@ -1534,6 +1541,22 @@ export default {
       testModel: 'Test model',
       testPrompt: 'Prompt: "hi"',
       pelicanTest: {
+        recordCount: '{count} records',
+        recordId: 'Record',
+        moreRecords: 'Load more records',
+        recordLoadError: 'This record expired or could not be loaded. Open the card to retry.',
+
+        historyLoadError: 'Some scheduled records could not be loaded. Available manual records are still shown.',
+        dashboardHint: 'All retained manual and scheduled outputs, one card per output. Refreshes every 15 seconds. Open a card to view the animation.',
+        scheduledPreview: 'Scheduled preview',
+        sourceManual: 'Manual',
+        sourceScheduled: 'Scheduled',
+        generatedAt: 'Generation time',
+        duration: 'Duration',
+
+        schedule: 'Scheduled tests',
+        preview: 'View HTML / animation',
+        scheduleHint: 'Runs on the server according to Cron even after closing this page. Keeps 100 outputs by default (1–200 configurable). Results older than 7 days are cleaned up even while paused.',
         menu: 'Pelican Test',
         title: 'Pelican Test',
         subtitle: 'Generate HTML in parallel for human comparison',

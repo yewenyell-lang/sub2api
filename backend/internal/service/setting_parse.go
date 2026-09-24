@@ -219,8 +219,9 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyRiskControlEnabled: "false",
 
 		// cyber 会话屏蔽（默认关闭，TTL 默认 3600s）
-		SettingKeyCyberSessionBlockEnabled:    "false",
-		SettingKeyCyberSessionBlockTTLSeconds: "3600",
+		SettingKeyCyberSessionBlockEnabled:          "false",
+		SettingKeyCyberSessionBlockTTLSeconds:       "3600",
+		SettingKeyCyberSessionIdentityStrictEnabled: "false",
 
 		// Claude Code version check (default: empty = disabled)
 		SettingKeyMinClaudeCodeVersion: "",
@@ -849,6 +850,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	} else {
 		result.CyberSessionBlockTTLSeconds = 3600
 	}
+	result.CyberSessionIdentityStrictEnabled = settings[SettingKeyCyberSessionIdentityStrictEnabled] == "true"
 
 	// Claude Code version check
 	result.MinClaudeCodeVersion = settings[SettingKeyMinClaudeCodeVersion]
@@ -928,6 +930,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	result.ClaudeCodeClientVersion = NormalizeClaudeCodeClientVersion(settings[SettingKeyClaudeCodeClientVersion])
 	result.ClaudeCodeClientVersionSynced = NormalizeClaudeCodeClientVersion(settings[SettingKeyClaudeCodeClientVersionSynced])
+	// 自动同步默认开启：缺失/空值一律视为开启，与 openai_codex_version_auto_sync_enabled 同一惯例。
 	if v, ok := settings[SettingKeyClaudeCodeVersionAutoSyncEnabled]; ok && v != "" {
 		result.ClaudeCodeVersionAutoSyncEnabled = v == "true"
 	} else {
